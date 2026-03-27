@@ -352,17 +352,14 @@ describe('agentscoreGate middleware — decision null/undefined treated as allow
   });
 });
 
-describe('agentscoreGate middleware — extractChain option', () => {
+describe('agentscoreGate middleware — chain option', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('sends the chain returned by extractChain in the request body', async () => {
+  it('does not send chain when not configured', async () => {
     mockFetchOk(ALLOW_RESPONSE);
-    const mw = agentscoreGate({
-      apiKey: API_KEY,
-      extractChain: () => 'ethereum',
-    });
+    const mw = agentscoreGate({ apiKey: API_KEY });
 
     const req = makeReq(WALLET);
     const { res } = makeRes();
@@ -370,15 +367,15 @@ describe('agentscoreGate middleware — extractChain option', () => {
 
     await mw(req, res, next);
 
-    expect(next).toHaveBeenCalledOnce();
     const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const body = JSON.parse(fetchCall[1].body as string);
-    expect(body.chain).toBe('ethereum');
+    expect(body.chain).toBeUndefined();
+    expect(body.address).toBe(WALLET);
   });
 
-  it('defaults chain to "base" when extractChain is not provided', async () => {
+  it('sends chain when configured', async () => {
     mockFetchOk(ALLOW_RESPONSE);
-    const mw = agentscoreGate({ apiKey: API_KEY });
+    const mw = agentscoreGate({ apiKey: API_KEY, chain: 'base' });
 
     const req = makeReq(WALLET);
     const { res } = makeRes();
