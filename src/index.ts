@@ -24,10 +24,10 @@ export interface AgentScoreGateOptions {
   cacheSeconds?: number;
   /** AgentScore API base URL. Defaults to "https://api.agentscore.sh". */
   baseUrl?: string;
+  /** Optional chain to filter scoring to. */
+  chain?: string;
   /** Custom function to extract the wallet address from the request. */
   extractAddress?: (req: Request) => string | undefined;
-  /** Custom function to extract the chain from the request. */
-  extractChain?: (req: Request) => string | undefined;
   /** Custom handler invoked when a request is denied. */
   onDenied?: (req: Request, res: Response, reason: DenialReason) => void;
 }
@@ -79,8 +79,8 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
     failOpen = false,
     cacheSeconds = 300,
     baseUrl = 'https://api.agentscore.sh',
+    chain: gateChain,
     extractAddress = defaultExtractAddress,
-    extractChain,
     onDenied = defaultOnDenied,
   } = options;
 
@@ -104,8 +104,7 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
       return;
     }
 
-    const chain = extractChain?.(req) ?? 'base';
-    const cacheKey = `${chain}:${address.toLowerCase()}`;
+    const cacheKey = address.toLowerCase();
 
     // 2. Check cache
     const cached = cache.get(cacheKey);
@@ -126,7 +125,8 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
 
     // 3. Call POST /v1/assess with policy
     try {
-      const body: Record<string, unknown> = { address, chain };
+      const body: Record<string, unknown> = { address };
+      if (gateChain) body.chain = gateChain;
 
       const policy: Record<string, unknown> = {};
       if (minGrade) policy.min_grade = minGrade;
