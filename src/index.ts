@@ -38,6 +38,82 @@ export interface DenialReason {
   reasons?: string[];
 }
 
+export interface AgentScoreData {
+  subject?: { address: string; chain: string | null };
+  classification?: {
+    entity_type: string;
+    confidence: number | null;
+    is_known: boolean;
+    is_known_erc8004_agent: boolean;
+    has_candidate_payment_activity: boolean;
+    has_verified_payment_activity: boolean;
+    reasons: string[];
+  };
+  operator_score?: {
+    score: number;
+    grade: string;
+    agent_count: number;
+    chains_active: string[];
+  };
+  agents?: Array<{
+    token_id: number;
+    chain: string;
+    name: string | null;
+    score: number;
+    grade: string;
+  }>;
+  score?: {
+    status: string;
+    value: number | null;
+    grade: string | null;
+    confidence: number | null;
+    dimensions: Record<string, number> | null;
+    scored_at: string | null;
+    version: string;
+  };
+  identity?: { ens_name: string | null; github_url: string | null; website_url: string | null };
+  activity?: {
+    total_candidate_transactions: number;
+    total_verified_transactions: number;
+    as_candidate_payer: number;
+    as_candidate_payee: number;
+    as_verified_payer: number;
+    as_verified_payee: number;
+    counterparties_count: number;
+    active_days: number;
+    active_months: number;
+    first_candidate_tx_at: string | null;
+    last_candidate_tx_at: string | null;
+    first_verified_tx_at: string | null;
+    last_verified_tx_at: string | null;
+  };
+  evidence_summary?: {
+    github_stars: number | null;
+    github_url: string | null;
+    has_a2a_agent_card: boolean;
+    metadata_kind: string | null;
+    website_mentions_mcp: boolean;
+    website_mentions_x402: boolean;
+    website_reachable: boolean;
+    website_url: string | null;
+    [key: string]: unknown;
+  };
+  reputation?: {
+    feedback_count: number;
+    client_count: number;
+    trust_avg: number | null;
+    uptime_avg: number | null;
+    activity_avg: number | null;
+    last_feedback_at: string | null;
+  };
+  decision: string | null;
+  decision_reasons: string[];
+  on_the_fly: boolean;
+  data_semantics?: string;
+  caveats?: string[];
+  updated_at?: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
