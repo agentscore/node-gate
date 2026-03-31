@@ -29,14 +29,14 @@ const API_KEY = 'test-api-key';
 const ALLOW_RESPONSE = {
   decision: 'allow',
   decision_reasons: [],
-  subject: { chain: 'base', address: WALLET },
+  subject: { chains: ['base'], address: WALLET },
   score: { value: 85, grade: 'A' },
 };
 
 const DENY_RESPONSE = {
   decision: 'deny',
   decision_reasons: ['low_score'],
-  subject: { chain: 'base', address: WALLET },
+  subject: { chains: ['base'], address: WALLET },
   score: { value: 20, grade: 'F' },
 };
 
