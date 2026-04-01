@@ -489,3 +489,158 @@ describe('agentscoreGate middleware — custom onDenied', () => {
     expect(headers['User-Agent']).toBe(`agentscore-gate-node/${__VERSION__}`);
   });
 });
+
+describe('agentscoreGate middleware — edge cases', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns 403 when default extractAddress receives an empty string header', async () => {
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = { headers: { 'x-wallet-address': '' } } as unknown as Request;
+    const { res, status, json } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_wallet_address' }));
+  });
+
+  it('propagates the error when a custom extractAddress throws', async () => {
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      extractAddress: () => { throw new Error('extractor boom'); },
+    });
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await expect(mw(req, res, next)).rejects.toThrow('extractor boom');
+  });
+
+  it('handles a custom onDenied that throws without crashing the middleware', async () => {
+    mockFetchOk(DENY_RESPONSE);
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      onDenied: () => { throw new Error('onDenied boom'); },
+    });
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    const result = mw(req, res, next);
+    await expect(result).rejects.toThrow('onDenied boom');
+  });
+
+  it('treats 0xABC and 0xabc as the same cache key via toLowerCase', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({ apiKey: API_KEY, cacheSeconds: 300 });
+
+    const req1 = makeReq('0xABC');
+    const { res: res1 } = makeRes();
+    const next1 = makeNext();
+    await mw(req1, res1, next1);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    const req2 = makeReq('0xabc');
+    const { res: res2 } = makeRes();
+    const next2 = makeNext();
+    await mw(req2, res2, next2);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(next1).toHaveBeenCalledOnce();
+    expect(next2).toHaveBeenCalledOnce();
+  });
+
+  it('isolates cache between different wallets', async () => {
+    const allowA = { ...ALLOW_RESPONSE, subject: { chains: ['base'], address: '0xwallet_a' } };
+    const denyB = { ...DENY_RESPONSE, subject: { chains: ['base'], address: '0xwallet_b' } };
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValueOnce(allowA) } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValueOnce(denyB) } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY, cacheSeconds: 300 });
+
+    const reqA = makeReq('0xwallet_a');
+    const { res: resA } = makeRes();
+    const nextA = makeNext();
+    await mw(reqA, resA, nextA);
+
+    const reqB = makeReq('0xwallet_b');
+    const { res: resB, status: statusB } = makeRes();
+    const nextB = makeNext();
+    await mw(reqB, resB, nextB);
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(nextA).toHaveBeenCalledOnce();
+    expect(nextB).not.toHaveBeenCalled();
+    expect(statusB).toHaveBeenCalledWith(403);
+  });
+
+  it('sends requireVerifiedActivity: false in policy (falsy but not undefined)', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      requireVerifiedActivity: false,
+    });
+
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.policy).toBeDefined();
+    expect(body.policy.require_verified_payment_activity).toBe(false);
+  });
+
+  it('sends User-Agent header matching @agentscore/gate format with version', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({ apiKey: API_KEY });
+
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const headers = fetchCall[1].headers as Record<string, string>;
+    expect(headers['User-Agent']).toMatch(/^agentscore-gate-node\/\d+\.\d+\.\d+$/);
+  });
+
+  it('overwrites cached deny with allow when cache expires and re-assessment succeeds', async () => {
+    vi.useFakeTimers();
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValueOnce(DENY_RESPONSE) } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValueOnce(ALLOW_RESPONSE) } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY, cacheSeconds: 10 });
+
+    const req1 = makeReq(WALLET);
+    const { res: res1, status: status1 } = makeRes();
+    const next1 = makeNext();
+    await mw(req1, res1, next1);
+
+    expect(status1).toHaveBeenCalledWith(403);
+    expect(next1).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(10001);
+
+    const req2 = makeReq(WALLET);
+    const { res: res2 } = makeRes();
+    const next2 = makeNext();
+    await mw(req2, res2, next2);
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(next2).toHaveBeenCalledOnce();
+
+    vi.useRealTimers();
+  });
+});

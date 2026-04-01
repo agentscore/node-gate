@@ -7,5 +7,15 @@ export default defineConfig({
   define: { __VERSION__: JSON.stringify(version) },
   test: {
     environment: 'node',
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json-summary'],
+      thresholds: {
+        statements: 95,
+        branches: 90,
+        functions: 95,
+        lines: 95,
+      },
+    },
   },
 });
