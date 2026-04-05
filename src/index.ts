@@ -38,13 +38,24 @@ export interface DenialReason {
   reasons?: string[];
 }
 
+export interface EvidenceSummary {
+  metadata_kind: string | null;
+  has_a2a_agent_card: boolean;
+  website_url: string | null;
+  website_reachable: boolean;
+  website_mentions_mcp: boolean;
+  website_mentions_x402: boolean;
+  github_url: string | null;
+  github_stars: number | null;
+}
+
 export interface AgentScoreChainEntry {
   chain: string;
-  score: { value: number | null; grade: string | null; confidence: number; dimensions: Record<string, number> | null; scored_at: string | null; status: string; version: string };
-  classification: { entity_type: string; confidence: number; is_known: boolean; is_known_erc8004_agent: boolean; has_candidate_payment_activity: boolean; has_verified_payment_activity: boolean; reasons: string[] };
-  identity: { ens_name: string | null; website_url: string | null; github_url: string | null };
-  activity: { total_candidate_transactions: number; total_verified_transactions: number; as_candidate_payer: number; as_candidate_payee: number; as_verified_payer: number; as_verified_payee: number; counterparties_count: number; active_days: number; active_months: number; first_candidate_tx_at: string | null; last_candidate_tx_at: string | null; first_verified_tx_at: string | null; last_verified_tx_at: string | null };
-  evidence_summary: Record<string, unknown>;
+  score: { value: number | null; grade: string | null; confidence?: number; dimensions?: Record<string, number> | null; scored_at: string | null; status: string; version: string };
+  classification: { entity_type: string; confidence?: number; is_known?: boolean; is_known_erc8004_agent?: boolean; has_candidate_payment_activity?: boolean; has_verified_payment_activity?: boolean; reasons?: string[] };
+  identity?: { ens_name: string | null; website_url: string | null; github_url: string | null };
+  activity?: { total_candidate_transactions: number; total_verified_transactions: number; as_candidate_payer: number; as_candidate_payee: number; as_verified_payer: number; as_verified_payee: number; counterparties_count: number; active_days: number; active_months: number; first_candidate_tx_at: string | null; last_candidate_tx_at: string | null; first_verified_tx_at: string | null; last_verified_tx_at: string | null };
+  evidence_summary?: EvidenceSummary;
 }
 
 export interface AgentScoreData {
@@ -60,8 +71,8 @@ export interface AgentScoreData {
   operator_score?: {
     score: number;
     grade: string;
-    agent_count: number;
-    chains_active: string[];
+    agent_count?: number;
+    chains_active?: string[];
   };
   agents?: Array<{
     token_id: number;
@@ -81,9 +92,9 @@ export interface AgentScoreData {
   decision: string | null;
   decision_reasons: string[];
   on_the_fly: boolean;
-  data_semantics?: string;
-  caveats?: string[];
-  updated_at?: string | null;
+  updated_at: string | null;
+  data_semantics: string;
+  caveats: string[];
 }
 
 // ---------------------------------------------------------------------------
