@@ -46,6 +46,7 @@ export interface DenialReason {
   code: 'wallet_not_trusted' | 'missing_wallet_address' | 'api_error' | 'payment_required';
   decision?: string;
   reasons?: string[];
+  verify_url?: string;
 }
 
 export interface EvidenceSummary {
@@ -200,6 +201,7 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
         code: 'wallet_not_trusted',
         decision: cached.decision,
         reasons: cached.reasons,
+        verify_url: cached.raw?.verify_url as string | undefined,
       };
       onDenied(req, res, reason);
       return;
@@ -267,6 +269,7 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
         code: 'wallet_not_trusted',
         decision: decision ?? undefined,
         reasons: decisionReasons,
+        verify_url: data.verify_url as string | undefined,
       };
       onDenied(req, res, reason);
     } catch {
