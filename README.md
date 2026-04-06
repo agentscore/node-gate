@@ -43,12 +43,33 @@ app.post("/api/transfer", gate, (req, res) => {
 | `minGrade` | `"A" \| "B" \| "C" \| "D" \| "F"` | --- | Minimum acceptable grade |
 | `minScore` | `number` | --- | Minimum score (0-100) |
 | `requireVerifiedActivity` | `boolean` | --- | Require verified payment activity |
+| `requireKyc` | `boolean` | --- | Require KYC verification |
+| `requireSanctionsClear` | `boolean` | --- | Require clean sanctions status |
+| `minAge` | `number` | --- | Minimum age (18 or 21) |
+| `blockedJurisdictions` | `string[]` | --- | ISO country codes to block |
+| `requireEntityType` | `string` | --- | Required operator type (`individual` or `entity`) |
 | `chain` | `string` | --- | Optional chain filter for scoring |
 | `failOpen` | `boolean` | `false` | Allow requests when API is unreachable |
 | `cacheSeconds` | `number` | `300` | Cache TTL for lookup results |
 | `baseUrl` | `string` | `https://api.agentscore.sh` | API base URL |
 | `extractAddress` | `(req) => string \| undefined` | Reads `x-wallet-address` header | Custom address extraction |
 | `onDenied` | `(req, res, reason) => void` | Returns 403 JSON | Custom denial handler |
+
+## Compliance Gating
+
+```typescript
+app.use(
+  agentscoreGate({
+    apiKey: "as_live_...",
+    minGrade: "B",
+    requireKyc: true,
+    requireSanctionsClear: true,
+    minAge: 18,
+    blockedJurisdictions: ["KP", "IR", "CU"],
+    requireEntityType: "individual",
+  })
+);
+```
 
 ## Documentation
 

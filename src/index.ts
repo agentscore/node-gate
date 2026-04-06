@@ -18,6 +18,16 @@ export interface AgentScoreGateOptions {
   minScore?: number;
   /** Require verified payment activity. */
   requireVerifiedActivity?: boolean;
+  /** Require KYC verification. */
+  requireKyc?: boolean;
+  /** Require the wallet to be clear of sanctions. */
+  requireSanctionsClear?: boolean;
+  /** Minimum wallet age in days. */
+  minAge?: number;
+  /** List of blocked jurisdictions. */
+  blockedJurisdictions?: string[];
+  /** Require a specific entity type. */
+  requireEntityType?: string;
   /** If true, allow the request through when the API is unreachable. Defaults to false. */
   failOpen?: boolean;
   /** How long to cache results, in seconds. Defaults to 300. */
@@ -95,6 +105,14 @@ export interface AgentScoreData {
   updated_at: string | null;
   data_semantics: string;
   caveats: string[];
+  operator_verification?: {
+    level: string;
+    operator_type: string | null;
+    claimed_at: string | null;
+    verified_at: string | null;
+  };
+  resolved_operator?: string;
+  verify_url?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +153,11 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
     minGrade,
     minScore,
     requireVerifiedActivity,
+    requireKyc,
+    requireSanctionsClear,
+    minAge,
+    blockedJurisdictions,
+    requireEntityType,
     failOpen = false,
     cacheSeconds = 300,
     baseUrl = 'https://api.agentscore.sh',
@@ -191,6 +214,11 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
       if (minGrade) policy.min_grade = minGrade;
       if (minScore != null) policy.min_score = minScore;
       if (requireVerifiedActivity != null) policy.require_verified_payment_activity = requireVerifiedActivity;
+      if (requireKyc != null) policy.require_kyc = requireKyc;
+      if (requireSanctionsClear != null) policy.require_sanctions_clear = requireSanctionsClear;
+      if (minAge != null) policy.min_age = minAge;
+      if (blockedJurisdictions != null) policy.blocked_jurisdictions = blockedJurisdictions;
+      if (requireEntityType != null) policy.require_entity_type = requireEntityType;
       if (Object.keys(policy).length > 0) body.policy = policy;
 
       const url = `${baseUrl}/v1/assess`;
@@ -198,7 +226,7 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          'X-API-Key': apiKey,
           'Content-Type': 'application/json',
           Accept: 'application/json',
           'User-Agent': `agentscore-gate-node/${__VERSION__}`,
