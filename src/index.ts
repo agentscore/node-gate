@@ -137,6 +137,7 @@ function defaultOnDenied(_req: Request, res: Response, reason: DenialReason): vo
   const body: Record<string, unknown> = { error: reason.code };
   if (reason.decision) body.decision = reason.decision;
   if (reason.reasons) body.reasons = reason.reasons;
+  if (reason.verify_url) body.verify_url = reason.verify_url;
   res.status(403).json(body);
 }
 
@@ -201,7 +202,7 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
         code: 'wallet_not_trusted',
         decision: cached.decision,
         reasons: cached.reasons,
-        verify_url: cached.raw?.verify_url as string | undefined,
+        verify_url: (cached.raw as Record<string, unknown> | undefined)?.verify_url as string | undefined,
       };
       onDenied(req, res, reason);
       return;
