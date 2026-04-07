@@ -614,6 +614,131 @@ describe('agentscoreGate middleware — edge cases', () => {
     expect(headers['User-Agent']).toMatch(/^agentscore-gate-node\/\d+\.\d+\.\d+$/);
   });
 
+  it('sends requireKyc as policy.require_kyc in request body', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      requireKyc: true,
+    });
+
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.policy).toBeDefined();
+    expect(body.policy.require_kyc).toBe(true);
+  });
+
+  it('sends requireSanctionsClear as policy.require_sanctions_clear', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      requireSanctionsClear: true,
+    });
+
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.policy.require_sanctions_clear).toBe(true);
+  });
+
+  it('sends minAge as policy.min_age', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      minAge: 90,
+    });
+
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.policy.min_age).toBe(90);
+  });
+
+  it('sends blockedJurisdictions as policy.blocked_jurisdictions', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      blockedJurisdictions: ['KP', 'IR'],
+    });
+
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.policy.blocked_jurisdictions).toEqual(['KP', 'IR']);
+  });
+
+  it('sends requireEntityType as policy.require_entity_type', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      requireEntityType: 'agent',
+    });
+
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.policy.require_entity_type).toBe('agent');
+  });
+
+  it('sends all compliance policy fields together', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      minGrade: 'B',
+      minScore: 70,
+      requireVerifiedActivity: true,
+      requireKyc: true,
+      requireSanctionsClear: true,
+      minAge: 30,
+      blockedJurisdictions: ['KP'],
+      requireEntityType: 'agent',
+    });
+
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.policy).toEqual({
+      min_grade: 'B',
+      min_score: 70,
+      require_verified_payment_activity: true,
+      require_kyc: true,
+      require_sanctions_clear: true,
+      min_age: 30,
+      blocked_jurisdictions: ['KP'],
+      require_entity_type: 'agent',
+    });
+  });
+
   it('overwrites cached deny with allow when cache expires and re-assessment succeeds', async () => {
     vi.useFakeTimers();
     global.fetch = vi.fn()
@@ -642,5 +767,132 @@ describe('agentscoreGate middleware — edge cases', () => {
     expect(next2).toHaveBeenCalledOnce();
 
     vi.useRealTimers();
+  });
+});
+
+describe('agentscoreGate middleware — verify_url and operator_verification in response', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const COMPLIANCE_DENY_RESPONSE = {
+    decision: 'deny',
+    decision_reasons: ['kyc_required', 'sanctions_check_pending'],
+    subject: { chains: ['base'], address: WALLET },
+    score: { value: 72, grade: 'C' },
+    operator_verification: {
+      level: 'none',
+      operator_type: null,
+      claimed_at: null,
+      verified_at: null,
+    },
+    verify_url: 'https://agentscore.sh/verify/abc123',
+    resolved_operator: '0xoperator456',
+  };
+
+  it('attaches verify_url to req.agentscore on allow with operator_verification', async () => {
+    const allowWithVerification = {
+      ...ALLOW_RESPONSE,
+      operator_verification: {
+        level: 'kyc_verified',
+        operator_type: 'business',
+        claimed_at: '2024-06-01T00:00:00Z',
+        verified_at: '2024-06-15T00:00:00Z',
+      },
+    };
+    mockFetchOk(allowWithVerification);
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    const agentscoreData = (req as unknown as Record<string, Record<string, unknown>>).agentscore;
+    expect(agentscoreData.operator_verification).toEqual(allowWithVerification.operator_verification);
+  });
+
+  it('returns 403 with verify_url in onDenied call on compliance deny', async () => {
+    mockFetchOk(COMPLIANCE_DENY_RESPONSE);
+    const onDenied = vi.fn();
+    const mw = agentscoreGate({ apiKey: API_KEY, onDenied });
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(onDenied).toHaveBeenCalledWith(
+      req,
+      res,
+      expect.objectContaining({
+        code: 'wallet_not_trusted',
+        decision: 'deny',
+        reasons: ['kyc_required', 'sanctions_check_pending'],
+      }),
+    );
+  });
+
+  it('includes verify_url in raw data cached on deny', async () => {
+    mockFetchOk(COMPLIANCE_DENY_RESPONSE);
+    const mw = agentscoreGate({ apiKey: API_KEY, cacheSeconds: 300 });
+    const req = makeReq(WALLET);
+    const { res, status } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    const req2 = makeReq(WALLET);
+    const { res: res2, status: status2 } = makeRes();
+    const next2 = makeNext();
+    await mw(req2, res2, next2);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(status2).toHaveBeenCalledWith(403);
+  });
+
+  it('integration: gate middleware with compliance deny returns verify_url through onDenied', async () => {
+    mockFetchOk(COMPLIANCE_DENY_RESPONSE);
+
+    let capturedReason: Record<string, unknown> | undefined;
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      requireKyc: true,
+      requireSanctionsClear: true,
+      onDenied: (_req, res, reason) => {
+        capturedReason = reason as unknown as Record<string, unknown>;
+        (res as unknown as ReturnType<typeof makeRes>['res']).status(403).json({
+          error: reason.code,
+          verify_url: COMPLIANCE_DENY_RESPONSE.verify_url,
+        });
+      },
+    });
+
+    const req = makeReq(WALLET);
+    const { res, status, json } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(capturedReason).toBeDefined();
+    expect(capturedReason!.code).toBe('wallet_not_trusted');
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: 'wallet_not_trusted',
+        verify_url: 'https://agentscore.sh/verify/abc123',
+      }),
+    );
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.policy.require_kyc).toBe(true);
+    expect(body.policy.require_sanctions_clear).toBe(true);
   });
 });

@@ -7,6 +7,7 @@ export default defineConfig({
   define: { __VERSION__: JSON.stringify(version) },
   test: {
     environment: 'node',
+    setupFiles: ['dotenv/config'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],
