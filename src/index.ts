@@ -114,6 +114,15 @@ export interface AgentScoreData {
   };
   resolved_operator?: string;
   verify_url?: string;
+  policy_result?: {
+    all_passed: boolean;
+    checks: Array<{
+      rule: string;
+      passed: boolean;
+      required?: unknown;
+      actual?: unknown;
+    }>;
+  } | null;
 }
 
 // ---------------------------------------------------------------------------
