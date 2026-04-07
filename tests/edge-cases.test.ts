@@ -1,5 +1,5 @@
 import { readFileSync } from 'fs';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agentscoreGate } from '../src/index';
 import type { NextFunction, Request, Response } from 'express';
 
@@ -180,13 +180,11 @@ describe('invalid wallet header edge cases', () => {
   it('returns 403 when x-wallet-address header is whitespace only', async () => {
     const mw = agentscoreGate({ apiKey: API_KEY });
     const req = { headers: { 'x-wallet-address': '   ' } } as unknown as Request;
-    const { res, status, json } = makeRes();
+    const { res } = makeRes();
     const next = makeNext();
 
     await mw(req, res, next);
 
-    // The default extractor checks length > 0 for string; '   ' has length 3
-    // so it will be sent as-is. This tests that whitespace addresses are accepted.
     expect(global.fetch).toBeDefined();
   });
 
@@ -225,7 +223,7 @@ describe('invalid wallet header edge cases', () => {
       extractAddress: () => '',
     });
     const req = makeReq(WALLET);
-    const { res, status, json } = makeRes();
+    const { res, status } = makeRes();
     const next = makeNext();
 
     await mw(req, res, next);
