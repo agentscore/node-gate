@@ -2,6 +2,19 @@
 
 Express middleware for trust-gating requests using AgentScore. Peer dependency on `express`.
 
+## Identity Model
+
+The gate supports two identity types via the `extractIdentity` option (backwards compatible with `extractAddress`):
+
+- **Wallet address** — `X-Wallet-Address` header (existing)
+- **Operator token** — `X-Operator-Token` header (new)
+
+Default behavior checks `X-Operator-Token` first, then `X-Wallet-Address`. The extracted identity is sent to AgentScore's `/v1/assess` endpoint as either `address` or `operator_token`.
+
+New types: `AgentIdentity`, `CreateSessionOnMissing`, updated `DenialReason` (adds `missing_identity` code).
+
+`createSessionOnMissing` option: when set and no identity found, creates a verification session and returns 403 with verify_url + poll instructions instead of a bare denial.
+
 ## Architecture
 
 Single-package TypeScript library published to npm.
