@@ -16,6 +16,10 @@ export interface AgentIdentity {
 export interface CreateSessionOnMissing {
   apiKey: string;
   baseUrl?: string;
+  context?: string;
+  returnUrl?: string;
+  paymentMethods?: ('tempo' | 'stripe')[];
+  productName?: string;
 }
 
 export interface AgentScoreGateOptions {
@@ -170,7 +174,12 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
               Accept: 'application/json',
               'User-Agent': `agentscore-gate-node/${__VERSION__}`,
             },
-            body: JSON.stringify({}),
+            body: JSON.stringify({
+              ...(createSessionOnMissing.context != null && { context: createSessionOnMissing.context }),
+              ...(createSessionOnMissing.returnUrl != null && { return_url: createSessionOnMissing.returnUrl }),
+              ...(createSessionOnMissing.paymentMethods != null && { payment_methods: createSessionOnMissing.paymentMethods }),
+              ...(createSessionOnMissing.productName != null && { product_name: createSessionOnMissing.productName }),
+            }),
             signal: AbortSignal.timeout(10_000),
           });
 

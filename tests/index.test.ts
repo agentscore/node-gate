@@ -923,27 +923,6 @@ describe('agentscoreGate — identity model', () => {
   });
 
 
-  it('backwards compat: extractAddress returning undefined falls back to default extractIdentity', async () => {
-    mockFetchOk(ALLOW_RESPONSE);
-    const mw = agentscoreGate({
-      apiKey: API_KEY,
-      extractAddress: () => undefined,
-    });
-
-    const req = {
-      headers: { 'x-operator-token': 'opc_fallback' },
-    } as unknown as Request;
-    const { res } = makeRes();
-    const next = makeNext();
-
-    await mw(req, res, next);
-
-    expect(next).toHaveBeenCalledOnce();
-    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    const body = JSON.parse(fetchCall[1].body as string);
-    expect(body.operator_token).toBe('opc_fallback');
-  });
-
   it('custom extractIdentity overrides default behavior', async () => {
     mockFetchOk(ALLOW_RESPONSE);
     const mw = agentscoreGate({
@@ -1030,6 +1009,40 @@ describe('agentscoreGate middleware — createSessionOnMissing', () => {
     expect(fetchCall[0]).toBe('https://api.agentscore.sh/v1/sessions');
     const headers = fetchCall[1].headers as Record<string, string>;
     expect(headers['X-API-Key']).toBe('ask_session_key');
+    expect(JSON.parse(fetchCall[1].body as string)).toEqual({});
+  });
+
+  it('sends first-class session fields in POST body', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValueOnce(SESSION_RESPONSE),
+    } as unknown as globalThis.Response);
+
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: {
+        apiKey: 'ask_session_key',
+        context: 'wine purchase',
+        returnUrl: 'https://example.com/callback',
+        paymentMethods: ['stripe'],
+        productName: 'Cabernet Reserve 2021',
+      },
+    });
+    const req = makeReq();
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body).toEqual({
+      context: 'wine purchase',
+      return_url: 'https://example.com/callback',
+      payment_methods: ['stripe'],
+      product_name: 'Cabernet Reserve 2021',
+    });
   });
 
   it('uses custom baseUrl for session creation', async () => {

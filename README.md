@@ -44,7 +44,7 @@ app.use(agentscoreGate({
 | `cacheSeconds` | `number` | `300` | Cache TTL for results |
 | `baseUrl` | `string` | `https://api.agentscore.sh` | API base URL |
 | `extractIdentity` | `(req) => AgentIdentity` | Reads headers | Custom identity extraction |
-| `createSessionOnMissing` | `{ apiKey, baseUrl? }` | --- | Auto-create session when no identity |
+| `createSessionOnMissing` | `CreateSessionOnMissing` | --- | Auto-create session when no identity |
 | `onDenied` | `(req, res, reason) => void` | Returns 403 JSON | Custom denial handler |
 
 ## Identity
@@ -70,7 +70,13 @@ When no identity is found, create a verification session automatically:
 app.use(agentscoreGate({
   apiKey: "as_live_...",
   requireKyc: true,
-  createSessionOnMissing: { apiKey: "as_live_..." },
+  createSessionOnMissing: {
+    apiKey: "as_live_...",
+    context: "wine purchase",
+    returnUrl: "https://example.com/callback",
+    paymentMethods: ["stripe"],
+    productName: "Cabernet Reserve 2021",
+  },
 }));
 // 403 response includes: verify_url, session_id, poll_secret, agent_instructions
 ```
