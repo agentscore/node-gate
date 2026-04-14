@@ -60,14 +60,12 @@ export interface DenialReason {
 }
 
 export interface AgentScoreData {
-  subject?: { address?: string; credential_prefix?: string };
   decision: string | null;
   decision_reasons: string[];
   identity_method?: string;
   operator_verification?: {
     level: string;
     operator_type: string | null;
-    claimed_at: string | null;
     verified_at: string | null;
   };
   resolved_operator?: string | null;
