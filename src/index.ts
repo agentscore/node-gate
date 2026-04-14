@@ -160,7 +160,8 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
 
       if (createSessionOnMissing) {
         try {
-          const sessionBaseUrl = (createSessionOnMissing.baseUrl ?? 'https://api.agentscore.sh').replace(/\/+$/, '');
+          let sessionBaseUrl = createSessionOnMissing.baseUrl ?? 'https://api.agentscore.sh';
+          while (sessionBaseUrl.endsWith('/')) { sessionBaseUrl = sessionBaseUrl.slice(0, -1); }
           const sessionRes = await fetch(`${sessionBaseUrl}/v1/sessions`, {
             method: 'POST',
             headers: {
