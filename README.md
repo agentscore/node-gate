@@ -73,8 +73,6 @@ app.use(agentscoreGate({
   createSessionOnMissing: {
     apiKey: "as_live_...",
     context: "wine purchase",
-    returnUrl: "https://example.com/callback",
-    paymentMethods: ["stripe"],
     productName: "Cabernet Reserve 2021",
   },
 }));

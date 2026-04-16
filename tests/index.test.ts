@@ -1024,8 +1024,6 @@ describe('agentscoreGate middleware — createSessionOnMissing', () => {
       createSessionOnMissing: {
         apiKey: 'ask_session_key',
         context: 'wine purchase',
-        returnUrl: 'https://example.com/callback',
-        paymentMethods: ['stripe'],
         productName: 'Cabernet Reserve 2021',
       },
     });
@@ -1039,8 +1037,6 @@ describe('agentscoreGate middleware — createSessionOnMissing', () => {
     const body = JSON.parse(fetchCall[1].body as string);
     expect(body).toEqual({
       context: 'wine purchase',
-      return_url: 'https://example.com/callback',
-      payment_methods: ['stripe'],
       product_name: 'Cabernet Reserve 2021',
     });
   });
