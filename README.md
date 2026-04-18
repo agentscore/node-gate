@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@agent-score/gate.svg)](https://www.npmjs.com/package/@agent-score/gate)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Express middleware for trust-gating requests using [AgentScore](https://agentscore.sh). Verify AI agent wallet reputation before allowing requests through.
+Express middleware for identity-gating requests using [AgentScore](https://agentscore.sh).
 
 ## Install
 
@@ -21,18 +21,11 @@ import { agentscoreGate } from "@agent-score/gate";
 
 const app = express();
 
-// Gate all routes — require trusted wallet
-app.use(agentscoreGate({ apiKey: "as_live_...", minGrade: "B" }));
-```
-
-### Route-Level
-
-```typescript
-const gate = agentscoreGate({ apiKey: "as_live_...", minScore: 35 });
-
-app.post("/api/transfer", gate, (req, res) => {
-  res.json({ ok: true, score: (req as any).agentscore });
-});
+app.use(agentscoreGate({
+  apiKey: "as_live_...",
+  requireKyc: true,
+  minAge: 21,
+}));
 ```
 
 ## Options
@@ -40,35 +33,50 @@ app.post("/api/transfer", gate, (req, res) => {
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `apiKey` | `string` | --- | API key from [agentscore.sh](https://agentscore.sh) |
-| `minGrade` | `"A" \| "B" \| "C" \| "D" \| "F"` | --- | Minimum acceptable grade |
-| `minScore` | `number` | --- | Minimum score (0-100) |
-| `requireVerifiedActivity` | `boolean` | --- | Require verified payment activity |
 | `requireKyc` | `boolean` | --- | Require KYC verification |
 | `requireSanctionsClear` | `boolean` | --- | Require clean sanctions status |
-| `minAge` | `number` | --- | Minimum age (18 or 21) |
+| `minAge` | `number` | --- | Minimum age bracket (18 or 21) |
 | `blockedJurisdictions` | `string[]` | --- | ISO country codes to block |
+| `allowedJurisdictions` | `string[]` | --- | ISO country codes to allow (only these pass) |
 | `requireEntityType` | `string` | --- | Required operator type (`individual` or `entity`) |
-| `chain` | `string` | --- | Optional chain filter for scoring |
+| `chain` | `string` | --- | Optional chain filter |
 | `failOpen` | `boolean` | `false` | Allow requests when API is unreachable |
-| `cacheSeconds` | `number` | `300` | Cache TTL for lookup results |
+| `cacheSeconds` | `number` | `300` | Cache TTL for results |
 | `baseUrl` | `string` | `https://api.agentscore.sh` | API base URL |
-| `extractAddress` | `(req) => string \| undefined` | Reads `x-wallet-address` header | Custom address extraction |
+| `extractIdentity` | `(req) => AgentIdentity` | Reads headers | Custom identity extraction |
+| `createSessionOnMissing` | `CreateSessionOnMissing` | --- | Auto-create session when no identity |
 | `onDenied` | `(req, res, reason) => void` | Returns 403 JSON | Custom denial handler |
 
-## Compliance Gating
+## Identity
+
+The gate checks `X-Operator-Token` first, then `X-Wallet-Address`:
 
 ```typescript
-app.use(
-  agentscoreGate({
+// Custom extraction
+app.use(agentscoreGate({
+  apiKey: "as_live_...",
+  extractIdentity: (req) => ({
+    operatorToken: req.headers["x-operator-token"] as string,
+    address: req.headers["x-wallet-address"] as string,
+  }),
+}));
+```
+
+### Auto-Create Session
+
+When no identity is found, create a verification session automatically:
+
+```typescript
+app.use(agentscoreGate({
+  apiKey: "as_live_...",
+  requireKyc: true,
+  createSessionOnMissing: {
     apiKey: "as_live_...",
-    minGrade: "B",
-    requireKyc: true,
-    requireSanctionsClear: true,
-    minAge: 18,
-    blockedJurisdictions: ["KP", "IR", "CU"],
-    requireEntityType: "individual",
-  })
-);
+    context: "wine purchase",
+    productName: "Cabernet Reserve 2021",
+  },
+}));
+// 403 response includes: verify_url, session_id, poll_secret, agent_instructions
 ```
 
 ## Documentation

@@ -198,39 +198,9 @@ describe('invalid wallet header edge cases', () => {
 
     expect(next).not.toHaveBeenCalled();
     expect(status).toHaveBeenCalledWith(403);
-    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_wallet_address' }));
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_identity' }));
   });
 
-  it('extractAddress returning undefined triggers missing_wallet_address when failOpen is false', async () => {
-    const mw = agentscoreGate({
-      apiKey: API_KEY,
-      extractAddress: () => undefined,
-    });
-    const req = makeReq(WALLET);
-    const { res, status, json } = makeRes();
-    const next = makeNext();
-
-    await mw(req, res, next);
-
-    expect(next).not.toHaveBeenCalled();
-    expect(status).toHaveBeenCalledWith(403);
-    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_wallet_address' }));
-  });
-
-  it('extractAddress returning empty string triggers missing_wallet_address', async () => {
-    const mw = agentscoreGate({
-      apiKey: API_KEY,
-      extractAddress: () => '',
-    });
-    const req = makeReq(WALLET);
-    const { res, status } = makeRes();
-    const next = makeNext();
-
-    await mw(req, res, next);
-
-    expect(next).not.toHaveBeenCalled();
-    expect(status).toHaveBeenCalledWith(403);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -426,7 +396,7 @@ describe('fail-open behavior on various errors', () => {
     expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'api_error' }));
   });
 
-  it('fails open on missing_wallet_address when failOpen is true', async () => {
+  it('fails open on missing_identity when failOpen is true', async () => {
     const mw = agentscoreGate({ apiKey: API_KEY, failOpen: true });
     const req = makeReq();
     const { res } = makeRes();

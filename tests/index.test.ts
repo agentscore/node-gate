@@ -90,7 +90,7 @@ describe('agentscoreGate middleware — missing wallet address', () => {
 
     expect(next).not.toHaveBeenCalled();
     expect(status).toHaveBeenCalledWith(403);
-    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_wallet_address' }));
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_identity' }));
   });
 
   it('calls next() when no wallet address and failOpen is true', async () => {
@@ -295,31 +295,6 @@ describe('agentscoreGate middleware — cache', () => {
   });
 });
 
-describe('agentscoreGate middleware — custom extractAddress', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('uses custom extractAddress to pull wallet from req.query', async () => {
-    mockFetchOk(ALLOW_RESPONSE);
-    const mw = agentscoreGate({
-      apiKey: API_KEY,
-      extractAddress: (req) => (req as unknown as Record<string, Record<string, string>>).query?.wallet,
-    });
-
-    const req = { headers: {}, query: { wallet: WALLET } } as unknown as Request;
-    const { res } = makeRes();
-    const next = makeNext();
-
-    await mw(req, res, next);
-
-    expect(next).toHaveBeenCalledOnce();
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/v1/assess'),
-      expect.objectContaining({ method: 'POST' }),
-    );
-  });
-});
 
 describe('agentscoreGate middleware — decision null/undefined treated as allow', () => {
   afterEach(() => {
@@ -394,48 +369,7 @@ describe('agentscoreGate middleware — policy fields in request body', () => {
     vi.restoreAllMocks();
   });
 
-  it('sends minGrade, minScore, and requireVerifiedActivity as policy', async () => {
-    mockFetchOk(ALLOW_RESPONSE);
-    const mw = agentscoreGate({
-      apiKey: API_KEY,
-      minGrade: 'B',
-      minScore: 70,
-      requireVerifiedActivity: true,
-    });
 
-    const req = makeReq(WALLET);
-    const { res } = makeRes();
-    const next = makeNext();
-
-    await mw(req, res, next);
-
-    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    const body = JSON.parse(fetchCall[1].body as string);
-    expect(body.policy).toEqual({
-      min_grade: 'B',
-      min_score: 70,
-      require_verified_payment_activity: true,
-    });
-  });
-
-  it('includes min_score: 0 in policy when minScore is 0 (not dropped by truthy check)', async () => {
-    mockFetchOk(ALLOW_RESPONSE);
-    const mw = agentscoreGate({
-      apiKey: API_KEY,
-      minScore: 0,
-    });
-
-    const req = makeReq(WALLET);
-    const { res } = makeRes();
-    const next = makeNext();
-
-    await mw(req, res, next);
-
-    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    const body = JSON.parse(fetchCall[1].body as string);
-    expect(body.policy).toBeDefined();
-    expect(body.policy.min_score).toBe(0);
-  });
 
   it('omits policy when no policy fields are set', async () => {
     mockFetchOk(ALLOW_RESPONSE);
@@ -505,20 +439,9 @@ describe('agentscoreGate middleware — edge cases', () => {
 
     expect(next).not.toHaveBeenCalled();
     expect(status).toHaveBeenCalledWith(403);
-    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_wallet_address' }));
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_identity' }));
   });
 
-  it('propagates the error when a custom extractAddress throws', async () => {
-    const mw = agentscoreGate({
-      apiKey: API_KEY,
-      extractAddress: () => { throw new Error('extractor boom'); },
-    });
-    const req = makeReq(WALLET);
-    const { res } = makeRes();
-    const next = makeNext();
-
-    await expect(mw(req, res, next)).rejects.toThrow('extractor boom');
-  });
 
   it('handles a custom onDenied that throws without crashing the middleware', async () => {
     mockFetchOk(DENY_RESPONSE);
@@ -580,24 +503,6 @@ describe('agentscoreGate middleware — edge cases', () => {
     expect(statusB).toHaveBeenCalledWith(403);
   });
 
-  it('sends requireVerifiedActivity: false in policy (falsy but not undefined)', async () => {
-    mockFetchOk(ALLOW_RESPONSE);
-    const mw = agentscoreGate({
-      apiKey: API_KEY,
-      requireVerifiedActivity: false,
-    });
-
-    const req = makeReq(WALLET);
-    const { res } = makeRes();
-    const next = makeNext();
-
-    await mw(req, res, next);
-
-    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    const body = JSON.parse(fetchCall[1].body as string);
-    expect(body.policy).toBeDefined();
-    expect(body.policy.require_verified_payment_activity).toBe(false);
-  });
 
   it('sends User-Agent header matching @agentscore/gate format with version', async () => {
     mockFetchOk(ALLOW_RESPONSE);
@@ -709,14 +614,12 @@ describe('agentscoreGate middleware — edge cases', () => {
     mockFetchOk(ALLOW_RESPONSE);
     const mw = agentscoreGate({
       apiKey: API_KEY,
-      minGrade: 'B',
-      minScore: 70,
-      requireVerifiedActivity: true,
       requireKyc: true,
       requireSanctionsClear: true,
-      minAge: 30,
+      minAge: 21,
       blockedJurisdictions: ['KP'],
-      requireEntityType: 'agent',
+      allowedJurisdictions: ['US'],
+      requireEntityType: 'individual',
     });
 
     const req = makeReq(WALLET);
@@ -728,14 +631,12 @@ describe('agentscoreGate middleware — edge cases', () => {
     const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const body = JSON.parse(fetchCall[1].body as string);
     expect(body.policy).toEqual({
-      min_grade: 'B',
-      min_score: 70,
-      require_verified_payment_activity: true,
       require_kyc: true,
       require_sanctions_clear: true,
-      min_age: 30,
+      min_age: 21,
       blocked_jurisdictions: ['KP'],
-      require_entity_type: 'agent',
+      allowed_jurisdictions: ['US'],
+      require_entity_type: 'individual',
     });
   });
 
@@ -894,5 +795,344 @@ describe('agentscoreGate middleware — verify_url and operator_verification in 
     const body = JSON.parse(fetchCall[1].body as string);
     expect(body.policy.require_kyc).toBe(true);
     expect(body.policy.require_sanctions_clear).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Identity model: extractIdentity, operator token, backwards compat
+// ---------------------------------------------------------------------------
+
+describe('agentscoreGate — identity model', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('default extractIdentity checks X-Operator-Token first', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = {
+      headers: { 'x-operator-token': 'opc_abc', 'x-wallet-address': WALLET },
+    } as unknown as Request;
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.operator_token).toBe('opc_abc');
+    expect(body.address).toBe(WALLET);
+  });
+
+  it('default extractIdentity falls back to X-Wallet-Address when no token', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.address).toBe(WALLET);
+    expect(body.operator_token).toBeUndefined();
+  });
+
+  it('sends operator_token to assess API when X-Operator-Token header present', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = {
+      headers: { 'x-operator-token': 'opc_test_123' },
+    } as unknown as Request;
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.operator_token).toBe('opc_test_123');
+    expect(body.address).toBeUndefined();
+  });
+
+  it('sends address when X-Wallet-Address present without token', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.address).toBe(WALLET);
+    expect(body.operator_token).toBeUndefined();
+  });
+
+  it('returns missing_identity denial code when no identity found', async () => {
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = { headers: {} } as unknown as Request;
+    const { res, status, json } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_identity' }));
+  });
+
+  it('calls next() on missing identity when failOpen is true', async () => {
+    const mw = agentscoreGate({ apiKey: API_KEY, failOpen: true });
+    const req = { headers: {} } as unknown as Request;
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it('cache key uses operator token when present (lowercased)', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({ apiKey: API_KEY, cacheSeconds: 300 });
+
+    const req1 = {
+      headers: { 'x-operator-token': 'OPC_ABC' },
+    } as unknown as Request;
+    const { res: res1 } = makeRes();
+    const next1 = makeNext();
+    await mw(req1, res1, next1);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    const req2 = {
+      headers: { 'x-operator-token': 'opc_abc' },
+    } as unknown as Request;
+    const { res: res2 } = makeRes();
+    const next2 = makeNext();
+    await mw(req2, res2, next2);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(next1).toHaveBeenCalledOnce();
+    expect(next2).toHaveBeenCalledOnce();
+  });
+
+
+  it('custom extractIdentity overrides default behavior', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      extractIdentity: () => ({ operatorToken: 'opc_custom' }),
+    });
+
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.operator_token).toBe('opc_custom');
+    expect(body.address).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createSessionOnMissing
+// ---------------------------------------------------------------------------
+
+describe('agentscoreGate middleware — createSessionOnMissing', () => {
+  const SESSION_RESPONSE = {
+    session_id: 'sess_abc123',
+    verify_url: 'https://agentscore.sh/verify/sess_abc123',
+    poll_secret: 'ps_secret_456',
+    agent_instructions: 'Please complete identity verification at the verify_url.',
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('creates a session and returns 403 with session data when no identity found', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValueOnce(SESSION_RESPONSE),
+    } as unknown as globalThis.Response);
+
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: { apiKey: 'ask_session_key' },
+    });
+    const req = makeReq();
+    const { res, status, json } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'identity_verification_required',
+      verify_url: 'https://agentscore.sh/verify/sess_abc123',
+      session_id: 'sess_abc123',
+      poll_secret: 'ps_secret_456',
+      agent_instructions: 'Please complete identity verification at the verify_url.',
+    }));
+  });
+
+  it('calls POST /v1/sessions with the session apiKey', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValueOnce(SESSION_RESPONSE),
+    } as unknown as globalThis.Response);
+
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: { apiKey: 'ask_session_key' },
+    });
+    const req = makeReq();
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(fetchCall[0]).toBe('https://api.agentscore.sh/v1/sessions');
+    const headers = fetchCall[1].headers as Record<string, string>;
+    expect(headers['X-API-Key']).toBe('ask_session_key');
+    expect(JSON.parse(fetchCall[1].body as string)).toEqual({});
+  });
+
+  it('sends first-class session fields in POST body', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValueOnce(SESSION_RESPONSE),
+    } as unknown as globalThis.Response);
+
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: {
+        apiKey: 'ask_session_key',
+        context: 'wine purchase',
+        productName: 'Cabernet Reserve 2021',
+      },
+    });
+    const req = makeReq();
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body).toEqual({
+      context: 'wine purchase',
+      product_name: 'Cabernet Reserve 2021',
+    });
+  });
+
+  it('uses custom baseUrl for session creation', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValueOnce(SESSION_RESPONSE),
+    } as unknown as globalThis.Response);
+
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: { apiKey: 'ask_session_key', baseUrl: 'https://custom.api.example.com' },
+    });
+    const req = makeReq();
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(fetchCall[0]).toBe('https://custom.api.example.com/v1/sessions');
+  });
+
+  it('falls back to missing_identity when session creation fails', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: vi.fn().mockResolvedValueOnce({}),
+    } as unknown as globalThis.Response);
+
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: { apiKey: 'ask_session_key' },
+    });
+    const req = makeReq();
+    const { res, status, json } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_identity' }));
+  });
+
+  it('falls back to missing_identity when session creation throws', async () => {
+    global.fetch = vi.fn().mockRejectedValueOnce(new Error('Network failure'));
+
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: { apiKey: 'ask_session_key' },
+    });
+    const req = makeReq();
+    const { res, status, json } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_identity' }));
+  });
+
+  it('does not create session when identity is present', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: { apiKey: 'ask_session_key' },
+    });
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const url = fetchCall[0] as string;
+    expect(url).toContain('/v1/assess');
+    expect(url).not.toContain('/v1/sessions');
+  });
+
+  it('failOpen takes precedence over createSessionOnMissing', async () => {
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      failOpen: true,
+      createSessionOnMissing: { apiKey: 'ask_session_key' },
+    });
+    const req = makeReq();
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
   });
 });

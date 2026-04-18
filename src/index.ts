@@ -7,25 +7,32 @@ declare const __VERSION__: string;
 // Types
 // ---------------------------------------------------------------------------
 
-type Grade = 'A' | 'B' | 'C' | 'D' | 'F';
+
+export interface AgentIdentity {
+  address?: string;
+  operatorToken?: string;
+}
+
+export interface CreateSessionOnMissing {
+  apiKey: string;
+  baseUrl?: string;
+  context?: string;
+  productName?: string;
+}
 
 export interface AgentScoreGateOptions {
   /** AgentScore API key. Required. */
   apiKey: string;
-  /** Minimum acceptable grade for the policy. */
-  minGrade?: Grade;
-  /** Minimum score for the policy (0-100). */
-  minScore?: number;
-  /** Require verified payment activity. */
-  requireVerifiedActivity?: boolean;
   /** Require KYC verification. */
   requireKyc?: boolean;
-  /** Require the wallet to be clear of sanctions. */
+  /** Require operator to be clear of sanctions. */
   requireSanctionsClear?: boolean;
-  /** Minimum wallet age in days. */
+  /** Minimum operator age bracket (18 or 21). */
   minAge?: number;
-  /** List of blocked jurisdictions. */
+  /** List of blocked jurisdictions (blocklist). */
   blockedJurisdictions?: string[];
+  /** List of allowed jurisdictions (allowlist — only these pass). */
+  allowedJurisdictions?: string[];
   /** Require a specific entity type. */
   requireEntityType?: string;
   /** If true, allow the request through when the API is unreachable. Defaults to false. */
@@ -36,83 +43,34 @@ export interface AgentScoreGateOptions {
   baseUrl?: string;
   /** Optional chain to filter scoring to. */
   chain?: string;
-  /** Custom function to extract the wallet address from the request. */
-  extractAddress?: (req: Request) => string | undefined;
+  /** Custom function to extract agent identity (wallet address and/or operator token). */
+  extractIdentity?: (req: Request) => AgentIdentity | undefined;
   /** Custom handler invoked when a request is denied. */
   onDenied?: (req: Request, res: Response, reason: DenialReason) => void;
+  /** When set and no identity is found, create a verification session instead of denying immediately. */
+  createSessionOnMissing?: CreateSessionOnMissing;
 }
 
 export interface DenialReason {
-  code: 'wallet_not_trusted' | 'missing_wallet_address' | 'api_error' | 'payment_required';
+  code: 'wallet_not_trusted' | 'missing_identity' | 'api_error' | 'payment_required' | 'identity_verification_required';
   decision?: string;
   reasons?: string[];
   verify_url?: string;
-}
-
-export interface EvidenceSummary {
-  metadata_kind: string | null;
-  has_a2a_agent_card: boolean;
-  website_url: string | null;
-  website_reachable: boolean;
-  website_mentions_mcp: boolean;
-  website_mentions_x402: boolean;
-  github_url: string | null;
-  github_stars: number | null;
-}
-
-export interface AgentScoreChainEntry {
-  chain: string;
-  score: { value: number | null; grade: string | null; confidence?: number; dimensions?: Record<string, number> | null; scored_at: string | null; status: string; version: string };
-  classification: { entity_type: string; confidence?: number; is_known?: boolean; is_known_erc8004_agent?: boolean; has_candidate_payment_activity?: boolean; has_verified_payment_activity?: boolean; reasons?: string[] };
-  identity?: { ens_name: string | null; website_url: string | null; github_url: string | null };
-  activity?: { total_candidate_transactions: number; total_verified_transactions: number; as_candidate_payer: number; as_candidate_payee: number; as_verified_payer: number; as_verified_payee: number; counterparties_count: number; active_days: number; active_months: number; first_candidate_tx_at: string | null; last_candidate_tx_at: string | null; first_verified_tx_at: string | null; last_verified_tx_at: string | null };
-  evidence_summary?: EvidenceSummary;
+  session_id?: string;
+  poll_secret?: string;
+  agent_instructions?: string;
 }
 
 export interface AgentScoreData {
-  subject?: { address: string; chains: string[] };
-  score?: {
-    value: number | null;
-    grade: string | null;
-    scored_at: string | null;
-    status: string;
-    version: string;
-  };
-  chains?: AgentScoreChainEntry[];
-  operator_score?: {
-    score: number;
-    grade: string;
-    agent_count?: number;
-    chains_active?: string[];
-  };
-  agents?: Array<{
-    token_id: number;
-    chain: string;
-    name: string | null;
-    score: number;
-    grade: string;
-  }>;
-  reputation?: {
-    feedback_count: number;
-    client_count: number;
-    trust_avg: number | null;
-    uptime_avg: number | null;
-    activity_avg: number | null;
-    last_feedback_at: string | null;
-  };
   decision: string | null;
   decision_reasons: string[];
-  on_the_fly: boolean;
-  updated_at: string | null;
-  data_semantics: string;
-  caveats: string[];
+  identity_method?: string;
   operator_verification?: {
     level: string;
     operator_type: string | null;
-    claimed_at: string | null;
     verified_at: string | null;
   };
-  resolved_operator?: string;
+  resolved_operator?: string | null;
   verify_url?: string;
   policy_result?: {
     all_passed: boolean;
@@ -136,9 +94,14 @@ interface AssessResult {
   raw?: unknown;
 }
 
-function defaultExtractAddress(req: Request): string | undefined {
-  const header = req.headers['x-wallet-address'];
-  if (typeof header === 'string' && header.length > 0) return header;
+
+function defaultExtractIdentity(req: Request): AgentIdentity | undefined {
+  const token = req.headers['x-operator-token'];
+  const addr = req.headers['x-wallet-address'];
+  const identity: AgentIdentity = {};
+  if (typeof token === 'string' && token.length > 0) identity.operatorToken = token;
+  if (typeof addr === 'string' && addr.length > 0) identity.address = addr;
+  if (identity.operatorToken || identity.address) return identity;
   return undefined;
 }
 
@@ -147,6 +110,9 @@ function defaultOnDenied(_req: Request, res: Response, reason: DenialReason): vo
   if (reason.decision) body.decision = reason.decision;
   if (reason.reasons) body.reasons = reason.reasons;
   if (reason.verify_url) body.verify_url = reason.verify_url;
+  if (reason.session_id) body.session_id = reason.session_id;
+  if (reason.poll_secret) body.poll_secret = reason.poll_secret;
+  if (reason.agent_instructions) body.agent_instructions = reason.agent_instructions;
   res.status(403).json(body);
 }
 
@@ -161,21 +127,22 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
 
   const {
     apiKey,
-    minGrade,
-    minScore,
-    requireVerifiedActivity,
     requireKyc,
     requireSanctionsClear,
     minAge,
     blockedJurisdictions,
+    allowedJurisdictions,
     requireEntityType,
     failOpen = false,
     cacheSeconds = 300,
     baseUrl = 'https://api.agentscore.sh',
     chain: gateChain,
-    extractAddress = defaultExtractAddress,
+    extractIdentity = defaultExtractIdentity,
     onDenied = defaultOnDenied,
+    createSessionOnMissing,
   } = options;
+
+  const resolveIdentity = extractIdentity;
 
   const cache = new TTLCache<AssessResult>(cacheSeconds * 1000);
 
@@ -184,20 +151,57 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
     res: Response,
     next: NextFunction,
   ): Promise<void> {
-    // 1. Extract wallet address
-    const address = extractAddress(req);
+    // 1. Extract identity (wallet address and/or operator token)
+    const identity = resolveIdentity(req);
 
-    if (!address) {
-      const reason: DenialReason = { code: 'missing_wallet_address' };
+    if (!identity) {
       if (failOpen) {
         next();
         return;
       }
+
+      if (createSessionOnMissing) {
+        try {
+          let sessionBaseUrl = createSessionOnMissing.baseUrl ?? 'https://api.agentscore.sh';
+          while (sessionBaseUrl.endsWith('/')) { sessionBaseUrl = sessionBaseUrl.slice(0, -1); }
+          const sessionRes = await fetch(`${sessionBaseUrl}/v1/sessions`, {
+            method: 'POST',
+            headers: {
+              'X-API-Key': createSessionOnMissing.apiKey,
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+              'User-Agent': `agentscore-gate-node/${__VERSION__}`,
+            },
+            body: JSON.stringify({
+              ...(createSessionOnMissing.context != null && { context: createSessionOnMissing.context }),
+              ...(createSessionOnMissing.productName != null && { product_name: createSessionOnMissing.productName }),
+            }),
+            signal: AbortSignal.timeout(10_000),
+          });
+
+          if (sessionRes.ok) {
+            const data = (await sessionRes.json()) as Record<string, unknown>;
+            const reason: DenialReason = {
+              code: 'identity_verification_required',
+              verify_url: data.verify_url as string | undefined,
+              session_id: data.session_id as string | undefined,
+              poll_secret: data.poll_secret as string | undefined,
+              agent_instructions: data.agent_instructions as string | undefined,
+            };
+            onDenied(req, res, reason);
+            return;
+          }
+        } catch {
+          // Fall through to default missing_identity denial
+        }
+      }
+
+      const reason: DenialReason = { code: 'missing_identity' };
       onDenied(req, res, reason);
       return;
     }
 
-    const cacheKey = address.toLowerCase();
+    const cacheKey = identity.operatorToken?.toLowerCase() ?? identity.address?.toLowerCase() ?? '';
 
     // 2. Check cache
     const cached = cache.get(cacheKey);
@@ -219,17 +223,17 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
 
     // 3. Call POST /v1/assess with policy
     try {
-      const body: Record<string, unknown> = { address };
+      const body: Record<string, unknown> = {};
+      if (identity.address) body.address = identity.address;
+      if (identity.operatorToken) body.operator_token = identity.operatorToken;
       if (gateChain) body.chain = gateChain;
 
       const policy: Record<string, unknown> = {};
-      if (minGrade) policy.min_grade = minGrade;
-      if (minScore != null) policy.min_score = minScore;
-      if (requireVerifiedActivity != null) policy.require_verified_payment_activity = requireVerifiedActivity;
       if (requireKyc != null) policy.require_kyc = requireKyc;
       if (requireSanctionsClear != null) policy.require_sanctions_clear = requireSanctionsClear;
       if (minAge != null) policy.min_age = minAge;
       if (blockedJurisdictions != null) policy.blocked_jurisdictions = blockedJurisdictions;
+      if (allowedJurisdictions != null) policy.allowed_jurisdictions = allowedJurisdictions;
       if (requireEntityType != null) policy.require_entity_type = requireEntityType;
       if (Object.keys(policy).length > 0) body.policy = policy;
 

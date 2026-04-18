@@ -16,62 +16,47 @@ describeIf('integration: real API assess response shape', () => {
     expect(res.ok).toBe(true);
     const data = await res.json();
 
-    expect(data.subject.chains).toBeInstanceOf(Array);
-    expect(data.subject.chains.length).toBeGreaterThan(0);
-
-    expect(typeof data.score.value).toBe('number');
-    expect(typeof data.score.grade).toBe('string');
-    expect(data.score.status).toBeDefined();
-    expect(data.score.version).toBeDefined();
-    expect(data.score.confidence).toBeUndefined();
-    expect(data.score.dimensions).toBeUndefined();
-
-    expect(data.chains).toBeInstanceOf(Array);
-    expect(data.chains.length).toBeGreaterThan(0);
-
     expect(data.decision).toBeDefined();
     expect(data.decision_reasons).toBeInstanceOf(Array);
-    expect(data.agents).toBeInstanceOf(Array);
-    expect(data.caveats).toBeInstanceOf(Array);
-    expect(data.data_semantics).toBeDefined();
-    expect(data.updated_at).toBeDefined();
-
-    expect(data.classification).toBeUndefined();
+    expect(data.identity_method).toBe('wallet');
+    expect(data.operator_verification).toBeDefined();
+    expect(typeof data.on_the_fly).toBe('boolean');
   });
 
-  it('assess chain entry has full per-chain data', async () => {
+  it('assess with compliance policy can deny', async () => {
     const res = await fetch(`${BASE_URL}/v1/assess`, {
       method: 'POST',
       headers: { 'X-API-Key': API_KEY!, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address: TEST_ADDRESS }),
-    });
-    const data = await res.json();
-    const chain = data.chains[0];
-
-    expect(chain.score.confidence).toBeDefined();
-    expect(chain.score.dimensions).toBeDefined();
-    expect(chain.classification).toBeDefined();
-    expect(chain.classification.entity_type).toBeDefined();
-    expect(chain.identity).toBeDefined();
-    expect(chain.activity).toBeDefined();
-    expect(chain.activity.as_verified_payer).toBeDefined();
-    expect(chain.activity.active_days).toBeDefined();
-    expect(chain.evidence_summary).toBeDefined();
-  });
-
-  it('assess with policy can deny', async () => {
-    const res = await fetch(`${BASE_URL}/v1/assess`, {
-      method: 'POST',
-      headers: { 'X-API-Key': API_KEY!, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address: TEST_ADDRESS, policy: { min_score: 999 } }),
+      body: JSON.stringify({ address: TEST_ADDRESS, policy: { require_kyc: true } }),
     });
     const data = await res.json();
 
     expect(data.decision).toBe('deny');
-    expect(data.decision_reasons.length).toBeGreaterThan(0);
+    expect(data.decision_reasons).toContain('kyc_required');
+    expect(data.policy_result).toBeDefined();
+    expect(data.policy_result.all_passed).toBe(false);
+    expect(data.explanation).toBeInstanceOf(Array);
+    expect(data.explanation.length).toBeGreaterThan(0);
+    expect(data.verify_url).toBeDefined();
+    expect(data.verify_url).toContain('/verify');
   });
 
-  it('assess includes operator_score when agents exist', async () => {
+  it('assess deny includes actionable explanation', async () => {
+    const res = await fetch(`${BASE_URL}/v1/assess`, {
+      method: 'POST',
+      headers: { 'X-API-Key': API_KEY!, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: TEST_ADDRESS, policy: { require_kyc: true } }),
+    });
+    const data = await res.json();
+
+    const explanation = data.explanation[0];
+    expect(explanation.rule).toBe('require_kyc');
+    expect(explanation.passed).toBe(false);
+    expect(explanation.how_to_remedy).toBeDefined();
+    expect(typeof explanation.message).toBe('string');
+  });
+
+  it('assess without policy returns allow with no_policy_applied', async () => {
     const res = await fetch(`${BASE_URL}/v1/assess`, {
       method: 'POST',
       headers: { 'X-API-Key': API_KEY!, 'Content-Type': 'application/json' },
@@ -79,11 +64,7 @@ describeIf('integration: real API assess response shape', () => {
     });
     const data = await res.json();
 
-    if (data.operator_score) {
-      expect(typeof data.operator_score.score).toBe('number');
-      expect(typeof data.operator_score.grade).toBe('string');
-      expect(typeof data.operator_score.agent_count).toBe('number');
-      expect(data.operator_score.chains_active).toBeInstanceOf(Array);
-    }
+    expect(data.decision).toBe('allow');
+    expect(data.decision_reasons).toContain('no_policy_applied');
   });
 });
