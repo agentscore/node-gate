@@ -592,24 +592,6 @@ describe('agentscoreGate middleware — edge cases', () => {
     expect(body.policy.blocked_jurisdictions).toEqual(['KP', 'IR']);
   });
 
-  it('sends requireEntityType as policy.require_entity_type', async () => {
-    mockFetchOk(ALLOW_RESPONSE);
-    const mw = agentscoreGate({
-      apiKey: API_KEY,
-      requireEntityType: 'agent',
-    });
-
-    const req = makeReq(WALLET);
-    const { res } = makeRes();
-    const next = makeNext();
-
-    await mw(req, res, next);
-
-    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    const body = JSON.parse(fetchCall[1].body as string);
-    expect(body.policy.require_entity_type).toBe('agent');
-  });
-
   it('sends all compliance policy fields together', async () => {
     mockFetchOk(ALLOW_RESPONSE);
     const mw = agentscoreGate({
@@ -619,7 +601,6 @@ describe('agentscoreGate middleware — edge cases', () => {
       minAge: 21,
       blockedJurisdictions: ['KP'],
       allowedJurisdictions: ['US'],
-      requireEntityType: 'individual',
     });
 
     const req = makeReq(WALLET);
@@ -636,7 +617,6 @@ describe('agentscoreGate middleware — edge cases', () => {
       min_age: 21,
       blocked_jurisdictions: ['KP'],
       allowed_jurisdictions: ['US'],
-      require_entity_type: 'individual',
     });
   });
 

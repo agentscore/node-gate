@@ -33,8 +33,6 @@ export interface AgentScoreGateOptions {
   blockedJurisdictions?: string[];
   /** List of allowed jurisdictions (allowlist — only these pass). */
   allowedJurisdictions?: string[];
-  /** Require a specific entity type. */
-  requireEntityType?: string;
   /** If true, allow the request through when the API is unreachable. Defaults to false. */
   failOpen?: boolean;
   /** How long to cache results, in seconds. Defaults to 300. */
@@ -132,7 +130,6 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
     minAge,
     blockedJurisdictions,
     allowedJurisdictions,
-    requireEntityType,
     failOpen = false,
     cacheSeconds = 300,
     baseUrl = 'https://api.agentscore.sh',
@@ -234,7 +231,6 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
       if (minAge != null) policy.min_age = minAge;
       if (blockedJurisdictions != null) policy.blocked_jurisdictions = blockedJurisdictions;
       if (allowedJurisdictions != null) policy.allowed_jurisdictions = allowedJurisdictions;
-      if (requireEntityType != null) policy.require_entity_type = requireEntityType;
       if (Object.keys(policy).length > 0) body.policy = policy;
 
       const url = `${baseUrl}/v1/assess`;
