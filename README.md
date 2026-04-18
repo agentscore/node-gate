@@ -38,7 +38,6 @@ app.use(agentscoreGate({
 | `minAge` | `number` | --- | Minimum age bracket (18 or 21) |
 | `blockedJurisdictions` | `string[]` | --- | ISO country codes to block |
 | `allowedJurisdictions` | `string[]` | --- | ISO country codes to allow (only these pass) |
-| `requireEntityType` | `string` | --- | Required operator type (`individual` or `entity`) |
 | `chain` | `string` | --- | Optional chain filter |
 | `failOpen` | `boolean` | `false` | Allow requests when API is unreachable |
 | `cacheSeconds` | `number` | `300` | Cache TTL for results |
