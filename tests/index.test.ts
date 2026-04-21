@@ -420,7 +420,7 @@ describe('agentscoreGate middleware — custom onDenied', () => {
     await middleware(req, res, next);
     const call = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const headers = call[1].headers as Record<string, string>;
-    expect(headers['User-Agent']).toBe(`agentscore-gate-node/${__VERSION__}`);
+    expect(headers['User-Agent']).toBe(`@agent-score/gate@${__VERSION__}`);
   });
 
   it('prepends custom userAgent to the default on /v1/assess', async () => {
@@ -432,7 +432,7 @@ describe('agentscoreGate middleware — custom onDenied', () => {
     await middleware(req, res, next);
     const call = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const headers = call[1].headers as Record<string, string>;
-    expect(headers['User-Agent']).toBe(`my-app/1.2.3 (agentscore-gate-node/${__VERSION__})`);
+    expect(headers['User-Agent']).toBe(`my-app/1.2.3 (@agent-score/gate@${__VERSION__})`);
   });
 
   it('prepends custom userAgent to the default on /v1/sessions', async () => {
@@ -450,7 +450,7 @@ describe('agentscoreGate middleware — custom onDenied', () => {
     await middleware(req, res, next);
     const call = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const headers = call[1].headers as Record<string, string>;
-    expect(headers['User-Agent']).toBe(`my-app/1.2.3 (agentscore-gate-node/${__VERSION__})`);
+    expect(headers['User-Agent']).toBe(`my-app/1.2.3 (@agent-score/gate@${__VERSION__})`);
   });
 });
 
@@ -546,7 +546,7 @@ describe('agentscoreGate middleware — edge cases', () => {
 
     const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const headers = fetchCall[1].headers as Record<string, string>;
-    expect(headers['User-Agent']).toMatch(/^agentscore-gate-node\/\d+\.\d+\.\d+$/);
+    expect(headers['User-Agent']).toMatch(/^@agent-score\/gate@\d+\.\d+\.\d+$/);
   });
 
   it('sends requireKyc as policy.require_kyc in request body', async () => {

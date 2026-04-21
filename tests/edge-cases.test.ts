@@ -26,7 +26,7 @@ describe('source code structure', () => {
 
   it('middleware sends User-Agent header with package version', () => {
     expect(indexSrc).toContain('User-Agent');
-    expect(indexSrc).toContain('agentscore-gate-node');
+    expect(indexSrc).toContain('@agent-score/gate@');
   });
 
   it('defaultOnDenied includes verify_url in response body', () => {

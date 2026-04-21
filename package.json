@@ -1,6 +1,6 @@
 {
   "name": "@agent-score/gate",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Express middleware for trust-gating requests using AgentScore",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

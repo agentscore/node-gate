@@ -47,7 +47,7 @@ export interface AgentScoreGateOptions {
   onDenied?: (req: Request, res: Response, reason: DenialReason) => void;
   /** When set and no identity is found, create a verification session instead of denying immediately. */
   createSessionOnMissing?: CreateSessionOnMissing;
-  /** Prepended to the default User-Agent as `"{userAgent} (agentscore-gate-node/{version})"`. Use to attribute API calls to your app. */
+  /** Prepended to the default User-Agent as `"{userAgent} (@agent-score/gate@{version})"`. Use to attribute API calls to your app. */
   userAgent?: string;
 }
 
@@ -144,7 +144,7 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
 
   const resolveIdentity = extractIdentity;
 
-  const defaultUa = `agentscore-gate-node/${__VERSION__}`;
+  const defaultUa = `@agent-score/gate@${__VERSION__}`;
   const userAgentHeader = userAgent ? `${userAgent} (${defaultUa})` : defaultUa;
 
   const cache = new TTLCache<AssessResult>(cacheSeconds * 1000);
