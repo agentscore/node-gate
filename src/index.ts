@@ -47,6 +47,8 @@ export interface AgentScoreGateOptions {
   onDenied?: (req: Request, res: Response, reason: DenialReason) => void;
   /** When set and no identity is found, create a verification session instead of denying immediately. */
   createSessionOnMissing?: CreateSessionOnMissing;
+  /** Prepended to the default User-Agent as `"{userAgent} (@agent-score/gate@{version})"`. Use to attribute API calls to your app. */
+  userAgent?: string;
 }
 
 export interface DenialReason {
@@ -137,9 +139,13 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
     extractIdentity = defaultExtractIdentity,
     onDenied = defaultOnDenied,
     createSessionOnMissing,
+    userAgent,
   } = options;
 
   const resolveIdentity = extractIdentity;
+
+  const defaultUa = `@agent-score/gate@${__VERSION__}`;
+  const userAgentHeader = userAgent ? `${userAgent} (${defaultUa})` : defaultUa;
 
   const cache = new TTLCache<AssessResult>(cacheSeconds * 1000);
 
@@ -167,7 +173,7 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
               'X-API-Key': createSessionOnMissing.apiKey,
               'Content-Type': 'application/json',
               Accept: 'application/json',
-              'User-Agent': `agentscore-gate-node/${__VERSION__}`,
+              'User-Agent': userAgentHeader,
             },
             body: JSON.stringify({
               ...(createSessionOnMissing.context != null && { context: createSessionOnMissing.context }),
@@ -241,7 +247,7 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
           'X-API-Key': apiKey,
           'Content-Type': 'application/json',
           Accept: 'application/json',
-          'User-Agent': `agentscore-gate-node/${__VERSION__}`,
+          'User-Agent': userAgentHeader,
         },
         body: JSON.stringify(body),
       });

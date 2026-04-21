@@ -42,6 +42,7 @@ app.use(agentscoreGate({
 | `failOpen` | `boolean` | `false` | Allow requests when API is unreachable |
 | `cacheSeconds` | `number` | `300` | Cache TTL for results |
 | `baseUrl` | `string` | `https://api.agentscore.sh` | API base URL |
+| `userAgent` | `string` | --- | Prepended to the default `User-Agent` as `"{userAgent} (@agent-score/gate@{version})"`. Use to attribute API calls to your app. |
 | `extractIdentity` | `(req) => AgentIdentity` | Reads headers | Custom identity extraction |
 | `createSessionOnMissing` | `CreateSessionOnMissing` | --- | Auto-create session when no identity |
 | `onDenied` | `(req, res, reason) => void` | Returns 403 JSON | Custom denial handler |

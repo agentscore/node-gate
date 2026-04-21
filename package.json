@@ -1,6 +1,6 @@
 {
   "name": "@agent-score/gate",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Express middleware for trust-gating requests using AgentScore",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -69,7 +69,7 @@
     "express": "^5.2.1",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.58.2",
+    "typescript-eslint": "^8.59.0",
     "vitest": "^4.1.4"
   }
 }

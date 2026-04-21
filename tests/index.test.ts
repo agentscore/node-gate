@@ -420,7 +420,37 @@ describe('agentscoreGate middleware — custom onDenied', () => {
     await middleware(req, res, next);
     const call = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const headers = call[1].headers as Record<string, string>;
-    expect(headers['User-Agent']).toBe(`agentscore-gate-node/${__VERSION__}`);
+    expect(headers['User-Agent']).toBe(`@agent-score/gate@${__VERSION__}`);
+  });
+
+  it('prepends custom userAgent to the default on /v1/assess', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+    const middleware = agentscoreGate({ apiKey: 'test-key', userAgent: 'my-app/1.2.3' });
+    const req = makeReq('0xabc123');
+    const { res } = makeRes();
+    const next = makeNext();
+    await middleware(req, res, next);
+    const call = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const headers = call[1].headers as Record<string, string>;
+    expect(headers['User-Agent']).toBe(`my-app/1.2.3 (@agent-score/gate@${__VERSION__})`);
+  });
+
+  it('prepends custom userAgent to the default on /v1/sessions', async () => {
+    mockFetchOk({ session_id: 's1', verify_url: 'https://v', poll_secret: 'p' });
+    const onDenied = vi.fn();
+    const middleware = agentscoreGate({
+      apiKey: 'test-key',
+      userAgent: 'my-app/1.2.3',
+      createSessionOnMissing: { apiKey: 'test-key' },
+      onDenied,
+    });
+    const req = { headers: {} } as unknown as Parameters<typeof middleware>[0];
+    const { res } = makeRes();
+    const next = makeNext();
+    await middleware(req, res, next);
+    const call = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const headers = call[1].headers as Record<string, string>;
+    expect(headers['User-Agent']).toBe(`my-app/1.2.3 (@agent-score/gate@${__VERSION__})`);
   });
 });
 
@@ -516,7 +546,7 @@ describe('agentscoreGate middleware — edge cases', () => {
 
     const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const headers = fetchCall[1].headers as Record<string, string>;
-    expect(headers['User-Agent']).toMatch(/^agentscore-gate-node\/\d+\.\d+\.\d+$/);
+    expect(headers['User-Agent']).toMatch(/^@agent-score\/gate@\d+\.\d+\.\d+$/);
   });
 
   it('sends requireKyc as policy.require_kyc in request body', async () => {
