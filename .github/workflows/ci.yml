@@ -15,6 +15,11 @@ jobs:
     steps:
       - uses: useblacksmith/checkout@v1
       - uses: oven-sh/setup-bun@v2
+      - uses: useblacksmith/cache@v1
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bunx tsc --noEmit
