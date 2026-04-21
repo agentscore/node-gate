@@ -1,5 +1,5 @@
 import { createAgentScoreCore } from '../core';
-import type { AgentIdentity, AgentScoreCore, AgentScoreCoreOptions, DenialReason } from '../core';
+import type { AgentIdentity, AgentScoreCore, AgentScoreCoreOptions, CreateSessionOnMissing, DenialReason } from '../core';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 
 const GATE_STATE_KEY = '__agentscoreGate';
@@ -9,11 +9,13 @@ interface GateState {
   operatorToken?: string;
 }
 
-export interface AgentScoreGateOptions extends AgentScoreCoreOptions {
+export interface AgentScoreGateOptions extends Omit<AgentScoreCoreOptions, 'createSessionOnMissing'> {
   /** Custom function to extract agent identity from a Fastify request. */
   extractIdentity?: (req: FastifyRequest) => AgentIdentity | undefined;
   /** Custom handler invoked when a request is denied. */
   onDenied?: (req: FastifyRequest, reply: FastifyReply, reason: DenialReason) => void | Promise<void>;
+  /** Auto-create a verification session on missing identity. Hooks receive the Fastify `request`. */
+  createSessionOnMissing?: CreateSessionOnMissing<FastifyRequest>;
 }
 
 function defaultExtractIdentity(req: FastifyRequest): AgentIdentity | undefined {
@@ -34,6 +36,7 @@ function defaultOnDenied(_req: FastifyRequest, reply: FastifyReply, reason: Deni
   if (reason.session_id) body.session_id = reason.session_id;
   if (reason.poll_secret) body.poll_secret = reason.poll_secret;
   if (reason.agent_instructions) body.agent_instructions = reason.agent_instructions;
+  if (reason.extra) Object.assign(body, reason.extra);
   reply.code(403).send(body);
 }
 
@@ -59,8 +62,8 @@ function defaultOnDenied(_req: FastifyRequest, reply: FastifyReply, reason: Deni
  * ```
  */
 const agentscoreGatePlugin: FastifyPluginAsync<AgentScoreGateOptions> = async (fastify, options) => {
-  const { extractIdentity = defaultExtractIdentity, onDenied = defaultOnDenied, ...coreOptions } = options;
-  const core = createAgentScoreCore(coreOptions);
+  const { extractIdentity = defaultExtractIdentity, onDenied = defaultOnDenied, ...coreOptions } = options as AgentScoreGateOptions & AgentScoreCoreOptions;
+  const core = createAgentScoreCore(coreOptions as AgentScoreCoreOptions);
 
   fastify.addHook('preHandler', async (request, reply) => {
     const identity = extractIdentity(request);
@@ -69,7 +72,7 @@ const agentscoreGatePlugin: FastifyPluginAsync<AgentScoreGateOptions> = async (f
       operatorToken: identity?.operatorToken,
     } satisfies GateState;
 
-    const outcome = await core.evaluate(identity);
+    const outcome = await core.evaluate(identity, request);
 
     if (outcome.kind === 'allow') {
       if (outcome.data) (request as unknown as Record<string, unknown>).agentscore = outcome.data;

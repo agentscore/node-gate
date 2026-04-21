@@ -260,6 +260,189 @@ describe('Hono adapter — createSessionOnMissing', () => {
     const postBody = JSON.parse(fetchCall[1].body as string);
     expect(postBody.context).toBe('wine-purchase');
   });
+
+  // -----------------------------------------------------------------------
+  // getSessionOptions hook
+  // -----------------------------------------------------------------------
+
+  it('getSessionOptions overrides the static productName per-request', async () => {
+    mockFetchOk(SESSION_RESPONSE);
+    const app = new Hono();
+    app.use('*', async (c, next) => { c.set('productName' as never, 'dynamic Cabernet' as never); await next(); });
+    app.use('*', agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: {
+        apiKey: API_KEY,
+        context: 'wine-purchase',
+        productName: 'static fallback',
+        getSessionOptions: (c) => ({ productName: c.get('productName' as never) as string }),
+      },
+    }));
+    app.get('/test', (c) => c.text('reached'));
+
+    await app.request('/test');
+    const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const postBody = JSON.parse(fetchCall[1].body as string);
+    expect(postBody.product_name).toBe('dynamic Cabernet');
+    expect(postBody.context).toBe('wine-purchase');
+  });
+
+  it('getSessionOptions may be async', async () => {
+    mockFetchOk(SESSION_RESPONSE);
+    const app = new Hono();
+    app.use('*', agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: {
+        apiKey: API_KEY,
+        getSessionOptions: async () => ({ productName: 'async dynamic' }),
+      },
+    }));
+    app.get('/test', (c) => c.text('reached'));
+
+    await app.request('/test');
+    const postBody = JSON.parse((global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as string);
+    expect(postBody.product_name).toBe('async dynamic');
+  });
+
+  it('getSessionOptions errors are swallowed and static values used', async () => {
+    mockFetchOk(SESSION_RESPONSE);
+    const app = new Hono();
+    app.use('*', agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: {
+        apiKey: API_KEY,
+        productName: 'static',
+        getSessionOptions: () => { throw new Error('boom'); },
+      },
+    }));
+    app.get('/test', (c) => c.text('reached'));
+
+    const res = await app.request('/test');
+    expect(res.status).toBe(403);  // session still created
+    const postBody = JSON.parse((global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as string);
+    expect(postBody.product_name).toBe('static');
+  });
+
+  // -----------------------------------------------------------------------
+  // onBeforeSession hook
+  // -----------------------------------------------------------------------
+
+  it('onBeforeSession return value is merged into the 403 body', async () => {
+    mockFetchOk(SESSION_RESPONSE);
+    const app = new Hono();
+    app.use('*', agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: {
+        apiKey: API_KEY,
+        onBeforeSession: () => ({ order_id: 'ord_123', reservation_id: 'r_42' }),
+      },
+    }));
+    app.get('/test', (c) => c.text('reached'));
+
+    const res = await app.request('/test');
+    const body = await res.json() as Record<string, unknown>;
+
+    expect(res.status).toBe(403);
+    expect(body.order_id).toBe('ord_123');
+    expect(body.reservation_id).toBe('r_42');
+    expect(body.session_id).toBe('sess_123');
+  });
+
+  it('onBeforeSession receives the minted session metadata', async () => {
+    mockFetchOk(SESSION_RESPONSE);
+    const hook = vi.fn().mockReturnValue({ order_id: 'ord_1' });
+    const app = new Hono();
+    app.use('*', agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: { apiKey: API_KEY, onBeforeSession: hook },
+    }));
+    app.get('/test', (c) => c.text('reached'));
+
+    await app.request('/test');
+    expect(hook).toHaveBeenCalledOnce();
+    const sessionArg = hook.mock.calls[0]![1] as Record<string, unknown>;
+    expect(sessionArg.session_id).toBe('sess_123');
+    expect(sessionArg.verify_url).toBe('https://agentscore.sh/verify/new');
+    expect(sessionArg.poll_secret).toBe('ps_secret');
+  });
+
+  it('onBeforeSession may be async', async () => {
+    mockFetchOk(SESSION_RESPONSE);
+    const app = new Hono();
+    app.use('*', agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: {
+        apiKey: API_KEY,
+        onBeforeSession: async () => ({ order_id: 'ord_async' }),
+      },
+    }));
+    app.get('/test', (c) => c.text('reached'));
+
+    const res = await app.request('/test');
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.order_id).toBe('ord_async');
+  });
+
+  it('onBeforeSession errors are swallowed and 403 still emitted without extra', async () => {
+    mockFetchOk(SESSION_RESPONSE);
+    const app = new Hono();
+    app.use('*', agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: {
+        apiKey: API_KEY,
+        onBeforeSession: () => { throw new Error('db down'); },
+      },
+    }));
+    app.get('/test', (c) => c.text('reached'));
+
+    const res = await app.request('/test');
+    const body = await res.json() as Record<string, unknown>;
+    expect(res.status).toBe(403);
+    expect(body.session_id).toBe('sess_123');
+    expect(body.order_id).toBeUndefined();
+  });
+
+  it('onBeforeSession non-object return is ignored (no extra merged)', async () => {
+    mockFetchOk(SESSION_RESPONSE);
+    const app = new Hono();
+    app.use('*', agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: {
+        apiKey: API_KEY,
+        onBeforeSession: () => 'not an object' as unknown as Record<string, unknown>,
+      },
+    }));
+    app.get('/test', (c) => c.text('reached'));
+
+    const res = await app.request('/test');
+    const body = await res.json() as Record<string, unknown>;
+    expect(res.status).toBe(403);
+    expect(body.session_id).toBe('sess_123');
+    // Extra was not an object → no new fields, but session data still present.
+    expect(Object.keys(body)).not.toContain('not an object');
+  });
+
+  it('custom onDenied can read reason.extra to build a custom response', async () => {
+    mockFetchOk(SESSION_RESPONSE);
+    const app = new Hono();
+    app.use('*', agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: {
+        apiKey: API_KEY,
+        onBeforeSession: () => ({ order_id: 'ord_42' }),
+      },
+      onDenied: (c, reason) => c.json({
+        code: reason.code,
+        stash: (reason.extra as { order_id?: string } | undefined)?.order_id,
+      }, 403),
+    }));
+    app.get('/test', (c) => c.text('reached'));
+
+    const res = await app.request('/test');
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.code).toBe('identity_verification_required');
+    expect(body.stash).toBe('ord_42');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -1,11 +1,13 @@
 import { createAgentScoreCore } from '../core';
-import type { AgentIdentity, AgentScoreCoreOptions, AgentScoreData, DenialReason } from '../core';
+import type { AgentIdentity, AgentScoreCoreOptions, AgentScoreData, CreateSessionOnMissing, DenialReason } from '../core';
 
-export interface AgentScoreGateOptions extends AgentScoreCoreOptions {
+export interface AgentScoreGateOptions extends Omit<AgentScoreCoreOptions, 'createSessionOnMissing'> {
   /** Custom function to extract agent identity from a Request. */
   extractIdentity?: (req: Request) => AgentIdentity | undefined;
   /** Custom handler invoked when a request is denied. Must return a Response. */
   onDenied?: (req: Request, reason: DenialReason) => Response | Promise<Response>;
+  /** Auto-create a verification session on missing identity. Hooks receive the `Request`. */
+  createSessionOnMissing?: CreateSessionOnMissing<Request>;
 }
 
 /**
@@ -47,6 +49,7 @@ function defaultOnDenied(_req: Request, reason: DenialReason): Response {
   if (reason.session_id) body.session_id = reason.session_id;
   if (reason.poll_secret) body.poll_secret = reason.poll_secret;
   if (reason.agent_instructions) body.agent_instructions = reason.agent_instructions;
+  if (reason.extra) Object.assign(body, reason.extra);
   return new Response(JSON.stringify(body), {
     status: 403,
     headers: { 'content-type': 'application/json' },
@@ -71,11 +74,11 @@ function defaultOnDenied(_req: Request, reason: DenialReason): Response {
  */
 export function createAgentScoreGate(options: AgentScoreGateOptions): (req: Request) => Promise<GuardResult> {
   const { extractIdentity = defaultExtractIdentity, onDenied = defaultOnDenied, ...coreOptions } = options;
-  const core = createAgentScoreCore(coreOptions);
+  const core = createAgentScoreCore(coreOptions as AgentScoreCoreOptions);
 
   return async (req: Request): Promise<GuardResult> => {
     const identity = extractIdentity(req);
-    const outcome = await core.evaluate(identity);
+    const outcome = await core.evaluate(identity, req);
 
     if (outcome.kind === 'allow') {
       const captureWallet = identity?.operatorToken

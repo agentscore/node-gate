@@ -185,6 +185,27 @@ createSessionOnMissing: {
 }
 ```
 
+### Per-request hooks
+
+For per-wine (or per-user-tier, or per-anything) session context, use the `getSessionOptions` callback. It receives the framework context so you can inspect the request body or state a prior middleware stashed:
+
+```typescript
+createSessionOnMissing: {
+  apiKey: "as_live_...",
+  getSessionOptions: async (c) => {
+    const body = await c.req.json();
+    const product = await lookupProduct(body.product_id);
+    return { productName: product.name };
+  },
+  // Optional side-effect hook — create a pending row in your DB, return the id
+  // so the 403 body carries it back to the agent for resume.
+  onBeforeSession: async (c, session) => {
+    const orderId = await createPendingOrder(await c.req.json(), session.session_id);
+    return { order_id: orderId }; // merged into DenialReason.extra
+  },
+}
+```
+
 ## Documentation
 
 - [API Reference](https://docs.agentscore.sh)

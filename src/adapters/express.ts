@@ -1,5 +1,5 @@
 import { createAgentScoreCore } from '../core';
-import type { AgentIdentity, AgentScoreCore, AgentScoreCoreOptions, DenialReason } from '../core';
+import type { AgentIdentity, AgentScoreCore, AgentScoreCoreOptions, CreateSessionOnMissing, DenialReason } from '../core';
 import type { Request, Response, NextFunction } from 'express';
 
 const GATE_STATE_KEY = '__agentscoreGate';
@@ -9,11 +9,13 @@ interface GateState {
   operatorToken?: string;
 }
 
-export interface AgentScoreGateOptions extends AgentScoreCoreOptions {
+export interface AgentScoreGateOptions extends Omit<AgentScoreCoreOptions, 'createSessionOnMissing'> {
   /** Custom function to extract agent identity (wallet address and/or operator token). */
   extractIdentity?: (req: Request) => AgentIdentity | undefined;
   /** Custom handler invoked when a request is denied. */
   onDenied?: (req: Request, res: Response, reason: DenialReason) => void;
+  /** Auto-create a verification session on missing identity. Hooks receive the Express `Request`. */
+  createSessionOnMissing?: CreateSessionOnMissing<Request>;
 }
 
 function defaultExtractIdentity(req: Request): AgentIdentity | undefined {
@@ -34,12 +36,15 @@ function defaultOnDenied(_req: Request, res: Response, reason: DenialReason): vo
   if (reason.session_id) body.session_id = reason.session_id;
   if (reason.poll_secret) body.poll_secret = reason.poll_secret;
   if (reason.agent_instructions) body.agent_instructions = reason.agent_instructions;
+  if (reason.extra) Object.assign(body, reason.extra);
   res.status(403).json(body);
 }
 
 export function agentscoreGate(options: AgentScoreGateOptions) {
   const { extractIdentity = defaultExtractIdentity, onDenied = defaultOnDenied, ...coreOptions } = options;
-  const core = createAgentScoreCore(coreOptions);
+  // Adapter's CreateSessionOnMissing<Request> is narrower than core's CreateSessionOnMissing<unknown>;
+  // the cast is safe because core passes whatever ctx the adapter hands it to the hook.
+  const core = createAgentScoreCore(coreOptions as AgentScoreCoreOptions);
 
   return async function agentscoreMiddleware(
     req: Request,
@@ -52,7 +57,7 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
       operatorToken: identity?.operatorToken,
     } satisfies GateState;
 
-    const outcome = await core.evaluate(identity);
+    const outcome = await core.evaluate(identity, req);
 
     if (outcome.kind === 'allow') {
       if (outcome.data) (req as unknown as Record<string, unknown>).agentscore = outcome.data;

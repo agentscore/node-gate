@@ -13,7 +13,7 @@ Default behavior checks `X-Operator-Token` first, then `X-Wallet-Address`. The e
 
 New types: `AgentIdentity`, `CreateSessionOnMissing`, updated `DenialReason` (adds `missing_identity` code).
 
-`createSessionOnMissing` option: when set and no identity found, creates a verification session and returns 403 with verify_url + poll instructions instead of a bare denial.
+`createSessionOnMissing` option: when set and no identity found, creates a verification session and returns 403 with verify_url + poll instructions instead of a bare denial. Two optional hooks let merchants bring per-request context: `getSessionOptions(ctx)` overrides `context`/`productName` per request (sync or async), and `onBeforeSession(ctx, session)` runs a side effect after the session mints with its return dict merged into `DenialReason.extra` (surfaces in the 403 body). Both receive the framework-native context (Hono `Context`, Express `Request`, etc.). Hook errors are swallowed with a log.
 
 ## Architecture
 

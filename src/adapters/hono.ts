@@ -1,5 +1,5 @@
 import { createAgentScoreCore } from '../core';
-import type { AgentIdentity, AgentScoreCore, AgentScoreCoreOptions, AgentScoreData, DenialReason } from '../core';
+import type { AgentIdentity, AgentScoreCore, AgentScoreCoreOptions, AgentScoreData, CreateSessionOnMissing, DenialReason } from '../core';
 import type { Context, MiddlewareHandler } from 'hono';
 
 const CONTEXT_KEY = 'agentscore';
@@ -10,11 +10,15 @@ interface GateState {
   operatorToken?: string;
 }
 
-export interface AgentScoreGateOptions extends AgentScoreCoreOptions {
+export interface AgentScoreGateOptions extends Omit<AgentScoreCoreOptions, 'createSessionOnMissing'> {
   /** Custom function to extract agent identity (wallet address and/or operator token). */
   extractIdentity?: (c: Context) => AgentIdentity | undefined;
   /** Custom handler invoked when a request is denied. Must return a Hono `Response`. */
   onDenied?: (c: Context, reason: DenialReason) => Response | Promise<Response>;
+  /** Auto-create a verification session when no identity is present. The `getSessionOptions`
+   *  and `onBeforeSession` hooks receive the Hono `Context` so they can read the request body,
+   *  look up product metadata, and pre-create merchant-specific resume tokens. */
+  createSessionOnMissing?: CreateSessionOnMissing<Context>;
 }
 
 function defaultExtractIdentity(c: Context): AgentIdentity | undefined {
@@ -35,6 +39,8 @@ function defaultOnDenied(c: Context, reason: DenialReason): Response {
   if (reason.session_id) body.session_id = reason.session_id;
   if (reason.poll_secret) body.poll_secret = reason.poll_secret;
   if (reason.agent_instructions) body.agent_instructions = reason.agent_instructions;
+  // Merchant-supplied fields from createSessionOnMissing.onBeforeSession.
+  if (reason.extra) Object.assign(body, reason.extra);
   return c.json(body, 403);
 }
 
@@ -51,13 +57,13 @@ function defaultOnDenied(c: Context, reason: DenialReason): Response {
  */
 export function agentscoreGate(options: AgentScoreGateOptions): MiddlewareHandler {
   const { extractIdentity = defaultExtractIdentity, onDenied = defaultOnDenied, ...coreOptions } = options;
-  const core = createAgentScoreCore(coreOptions);
+  const core = createAgentScoreCore(coreOptions as AgentScoreCoreOptions);
 
   return async (c, next) => {
     const identity = extractIdentity(c);
     c.set(GATE_STATE_KEY, { core, operatorToken: identity?.operatorToken } satisfies GateState);
 
-    const outcome = await core.evaluate(identity);
+    const outcome = await core.evaluate(identity, c);
 
     if (outcome.kind === 'allow') {
       if (outcome.data) c.set(CONTEXT_KEY, outcome.data);
