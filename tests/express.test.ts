@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { agentscoreGate } from '../src/index';
+import { agentscoreGate, captureWallet } from '../src/adapters/express';
 import type { NextFunction, Request, Response } from 'express';
 
 // ---------------------------------------------------------------------------
@@ -701,6 +701,56 @@ describe('agentscoreGate middleware — verify_url and operator_verification in 
     resolved_operator: '0xoperator456',
   };
 
+  it('creates a session and returns 403 identity_verification_required when identity missing', async () => {
+    mockFetchOk({
+      session_id: 'sess_ex1',
+      poll_secret: 'ps_ex',
+      verify_url: 'https://agentscore.sh/verify/ex',
+      agent_instructions: 'Verify to continue',
+    });
+    const mw = agentscoreGate({
+      apiKey: API_KEY,
+      createSessionOnMissing: { apiKey: API_KEY, context: 'api' },
+    });
+    const req = makeReq(); // no identity
+    const { res, status, json } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'identity_verification_required',
+      session_id: 'sess_ex1',
+      poll_secret: 'ps_ex',
+    }));
+  });
+
+  it('exposes the full assess response on reason.data in custom onDenied', async () => {
+    const denyWithPolicy = {
+      decision: 'deny',
+      decision_reasons: ['kyc_required'],
+      verify_url: 'https://agentscore.sh/verify/xyz',
+      policy_result: { all_passed: false, checks: [{ rule: 'require_kyc', passed: false }] },
+    };
+    mockFetchOk(denyWithPolicy);
+    const onDenied = vi.fn((_req, res) => { res.status(403).json({ ok: false }); });
+    const mw = agentscoreGate({ apiKey: API_KEY, requireKyc: true, onDenied });
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+
+    await mw(req, res, next);
+
+    const reason = onDenied.mock.calls[0][2];
+    expect(reason.data).toMatchObject({
+      decision: 'deny',
+      decision_reasons: ['kyc_required'],
+      policy_result: { all_passed: false, checks: [{ rule: 'require_kyc', passed: false }] },
+    });
+  });
+
   it('attaches verify_url to req.agentscore on allow with operator_verification', async () => {
     const allowWithVerification = {
       ...ALLOW_RESPONSE,
@@ -1144,5 +1194,97 @@ describe('agentscoreGate middleware — createSessionOnMissing', () => {
     await mw(req, res, next);
 
     expect(next).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Express adapter — captureWallet', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('posts to /v1/credentials/wallets with operator_token + signer + network after gate ran', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValueOnce(ALLOW_RESPONSE) } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValueOnce({ associated: true, first_seen: true }) } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = { headers: { 'x-operator-token': 'opc_test' } } as unknown as Request;
+    const { res } = makeRes();
+    const next = makeNext();
+    await mw(req, res, next);
+
+    await captureWallet(req, { walletAddress: '0xsigner', network: 'evm' });
+
+    const captureCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[1];
+    expect(captureCall[0]).toContain('/v1/credentials/wallets');
+    expect(JSON.parse(captureCall[1].body as string)).toEqual({
+      operator_token: 'opc_test',
+      wallet_address: '0xsigner',
+      network: 'evm',
+    });
+  });
+
+  it('no-ops silently when the request was wallet-authenticated (no operator_token)', async () => {
+    mockFetchOk(ALLOW_RESPONSE);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res } = makeRes();
+    const next = makeNext();
+    await mw(req, res, next);
+
+    await captureWallet(req, { walletAddress: '0xsigner', network: 'evm' });
+
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+
+  it('forwards idempotencyKey as snake_case idempotency_key in the body', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValueOnce(ALLOW_RESPONSE) } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValueOnce({ associated: true, first_seen: false, deduped: true }) } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = { headers: { 'x-operator-token': 'opc_test' } } as unknown as Request;
+    const { res } = makeRes();
+    const next = makeNext();
+    await mw(req, res, next);
+
+    await captureWallet(req, { walletAddress: '0xsigner', network: 'evm', idempotencyKey: 'pi_abc' });
+
+    const captureCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[1];
+    const body = JSON.parse(captureCall[1].body as string);
+    expect(body.idempotency_key).toBe('pi_abc');
+  });
+
+  it('swallows capture failures silently — does not throw to the caller', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValueOnce(ALLOW_RESPONSE) } as unknown as Response)
+      .mockRejectedValueOnce(new Error('network down'));
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = { headers: { 'x-operator-token': 'opc_test' } } as unknown as Request;
+    const { res } = makeRes();
+    const next = makeNext();
+    await mw(req, res, next);
+
+    await expect(
+      captureWallet(req, { walletAddress: '0xsigner', network: 'evm' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('drops idempotencyKey when empty string (truthy check) to match SDK parity', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValueOnce(ALLOW_RESPONSE) } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200, json: vi.fn().mockResolvedValueOnce({ associated: true, first_seen: true }) } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = { headers: { 'x-operator-token': 'opc_test' } } as unknown as Request;
+    const { res } = makeRes();
+    const next = makeNext();
+    await mw(req, res, next);
+
+    await captureWallet(req, { walletAddress: '0xsigner', network: 'evm', idempotencyKey: '' });
+
+    const captureCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[1];
+    const body = JSON.parse(captureCall[1].body as string);
+    expect(body).not.toHaveProperty('idempotency_key');
   });
 });
