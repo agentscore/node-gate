@@ -1,5 +1,13 @@
 import { TTLCache } from './cache';
 
+// Character-based trim avoids a CodeQL polynomial-redos false positive on
+// `/\/+$/` patterns that report library-input strings.
+function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end--;
+  return end === s.length ? s : s.slice(0, end);
+}
+
 declare const __VERSION__: string;
 
 // ---------------------------------------------------------------------------
@@ -150,7 +158,7 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
     createSessionOnMissing,
   } = options;
 
-  const baseUrl = rawBaseUrl.replace(/\/+$/, '');
+  const baseUrl = stripTrailingSlashes(rawBaseUrl);
 
   const defaultUa = `@agent-score/gate@${__VERSION__}`;
   const userAgentHeader = userAgent ? `${userAgent} (${defaultUa})` : defaultUa;
@@ -167,7 +175,7 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
 
       if (createSessionOnMissing) {
         try {
-          const sessionBaseUrl = (createSessionOnMissing.baseUrl ?? 'https://api.agentscore.sh').replace(/\/+$/, '');
+          const sessionBaseUrl = stripTrailingSlashes(createSessionOnMissing.baseUrl ?? 'https://api.agentscore.sh');
           const sessionRes = await fetch(`${sessionBaseUrl}/v1/sessions`, {
             method: 'POST',
             headers: {
