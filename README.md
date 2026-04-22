@@ -175,7 +175,7 @@ By default, each adapter checks `X-Operator-Token` first, then `X-Wallet-Address
 
 ## Auto-Create Session
 
-When no identity is found and `createSessionOnMissing` is set, the gate creates a verification session and returns a 403 with `verify_url`, `session_id`, `poll_secret`, and `agent_instructions`. The agent polls to completion, then retries with the resulting `operator_token`.
+When no identity is found and `createSessionOnMissing` is set, the gate creates a verification session and returns a 403 with `verify_url`, `session_id`, `poll_secret`, `poll_url`, and `agent_instructions`. The agent polls `poll_url` with `X-Poll-Secret: {poll_secret}` to completion, then retries with the resulting `operator_token`.
 
 ```typescript
 createSessionOnMissing: {

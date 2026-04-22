@@ -534,7 +534,7 @@ describe('agentscoreGate middleware — edge cases', () => {
   });
 
 
-  it('sends User-Agent header matching @agentscore/gate format with version', async () => {
+  it('sends User-Agent header matching @agent-score/gate format with version', async () => {
     mockFetchOk(ALLOW_RESPONSE);
     const mw = agentscoreGate({ apiKey: API_KEY });
 

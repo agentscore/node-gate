@@ -35,6 +35,7 @@ function defaultOnDenied(_req: Request, res: Response, reason: DenialReason): vo
   if (reason.verify_url) body.verify_url = reason.verify_url;
   if (reason.session_id) body.session_id = reason.session_id;
   if (reason.poll_secret) body.poll_secret = reason.poll_secret;
+  if (reason.poll_url) body.poll_url = reason.poll_url;
   if (reason.agent_instructions) body.agent_instructions = reason.agent_instructions;
   if (reason.extra) Object.assign(body, reason.extra);
   res.status(403).json(body);

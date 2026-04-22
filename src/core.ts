@@ -28,6 +28,7 @@ export interface SessionMetadata {
   session_id: string;
   verify_url: string;
   poll_secret: string;
+  poll_url: string;
   expires_at?: string;
 }
 
@@ -95,6 +96,7 @@ export interface DenialReason {
   verify_url?: string;
   session_id?: string;
   poll_secret?: string;
+  poll_url?: string;
   agent_instructions?: string;
   /** Full assess response when the denial came from `/v1/assess`. Lets consumers access fields
    *  not promoted to first-class DenialReason properties (e.g., `policy_result`). Undefined for
@@ -260,6 +262,7 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
                   session_id: data.session_id as string,
                   verify_url: data.verify_url as string,
                   poll_secret: data.poll_secret as string,
+                  poll_url: data.poll_url as string,
                   expires_at: data.expires_at as string | undefined,
                 };
                 const result = await createSessionOnMissing.onBeforeSession(ctx, sessionMeta);
@@ -276,6 +279,7 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
                 verify_url: data.verify_url as string | undefined,
                 session_id: data.session_id as string | undefined,
                 poll_secret: data.poll_secret as string | undefined,
+                poll_url: data.poll_url as string | undefined,
                 agent_instructions: data.agent_instructions as string | undefined,
                 ...(extra && { extra }),
               },
