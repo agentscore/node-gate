@@ -1,22 +1,23 @@
 import { readFileSync } from 'fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { agentscoreGate } from '../src/index';
+import { agentscoreGate } from '../src/adapters/express';
 import type { NextFunction, Request, Response } from 'express';
 
 // ---------------------------------------------------------------------------
 // Source-code reading sanity checks
 // ---------------------------------------------------------------------------
 
-const indexSrc = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf-8');
+const coreSrc = readFileSync(new URL('../src/core.ts', import.meta.url), 'utf-8');
+const expressSrc = readFileSync(new URL('../src/adapters/express.ts', import.meta.url), 'utf-8');
 const cacheSrc = readFileSync(new URL('../src/cache.ts', import.meta.url), 'utf-8');
 
 describe('source code structure', () => {
-  it('exports agentscoreGate factory', () => {
-    expect(indexSrc).toContain('export function agentscoreGate');
+  it('Express adapter exports agentscoreGate factory', () => {
+    expect(expressSrc).toContain('export function agentscoreGate');
   });
 
   it('DenialReason includes verify_url field', () => {
-    expect(indexSrc).toContain('verify_url?: string');
+    expect(coreSrc).toContain('verify_url?: string');
   });
 
   it('TTLCache has sweep and evictOldest methods', () => {
@@ -24,13 +25,45 @@ describe('source code structure', () => {
     expect(cacheSrc).toContain('private evictOldest');
   });
 
-  it('middleware sends User-Agent header with package version', () => {
-    expect(indexSrc).toContain('User-Agent');
-    expect(indexSrc).toContain('@agent-score/gate@');
+  it('core sends User-Agent header with package version', () => {
+    expect(coreSrc).toContain('User-Agent');
+    expect(coreSrc).toContain('@agent-score/gate@');
   });
 
-  it('defaultOnDenied includes verify_url in response body', () => {
-    expect(indexSrc).toContain('reason.verify_url');
+  it('Express middleware sends canonical User-Agent by default and prepends custom when configured', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValueOnce({ decision: 'allow', decision_reasons: [] }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValueOnce({ decision: 'allow', decision_reasons: [] }),
+      } as unknown as Response);
+
+    const def = agentscoreGate({ apiKey: API_KEY });
+    const req1 = { headers: { 'x-wallet-address': WALLET } } as unknown as Request;
+    const { res: res1 } = makeRes();
+    const next1 = makeNext();
+    await def(req1, res1, next1);
+
+    const call1 = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call1[1].headers['User-Agent']).toMatch(/^@agent-score\/gate@\d+\.\d+\.\d+$/);
+
+    const custom = agentscoreGate({ apiKey: API_KEY, userAgent: 'express-app/1.0.0' });
+    const req2 = { headers: { 'x-wallet-address': WALLET } } as unknown as Request;
+    const { res: res2 } = makeRes();
+    const next2 = makeNext();
+    await custom(req2, res2, next2);
+
+    const call2 = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[1];
+    expect(call2[1].headers['User-Agent']).toMatch(/^express-app\/1\.0\.0 \(@agent-score\/gate@\d+\.\d+\.\d+\)$/);
+  });
+
+  it('Express defaultOnDenied includes verify_url in response body', () => {
+    expect(expressSrc).toContain('reason.verify_url');
   });
 });
 

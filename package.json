@@ -1,22 +1,52 @@
 {
   "name": "@agent-score/gate",
   "version": "1.7.0",
-  "description": "Express middleware for trust-gating requests using AgentScore",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
+  "description": "Trust-gating middleware for Node.js web frameworks (Express, Hono, Next.js, Fastify, Web Fetch) using AgentScore",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.mjs",
+      "require": "./dist/core.js"
+    },
+    "./express": {
+      "types": "./dist/adapters/express.d.ts",
+      "import": "./dist/adapters/express.mjs",
+      "require": "./dist/adapters/express.js"
+    },
+    "./hono": {
+      "types": "./dist/adapters/hono.d.ts",
+      "import": "./dist/adapters/hono.mjs",
+      "require": "./dist/adapters/hono.js"
+    },
+    "./web": {
+      "types": "./dist/adapters/web.d.ts",
+      "import": "./dist/adapters/web.mjs",
+      "require": "./dist/adapters/web.js"
+    },
+    "./nextjs": {
+      "types": "./dist/adapters/nextjs.d.ts",
+      "import": "./dist/adapters/nextjs.mjs",
+      "require": "./dist/adapters/nextjs.js"
+    },
+    "./fastify": {
+      "types": "./dist/adapters/fastify.d.ts",
+      "import": "./dist/adapters/fastify.mjs",
+      "require": "./dist/adapters/fastify.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
@@ -26,6 +56,9 @@
   "keywords": [
     "agentscore",
     "express",
+    "hono",
+    "nextjs",
+    "fastify",
     "middleware",
     "gate",
     "trust",
@@ -51,25 +84,35 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "express": ">=4.0.0"
+    "express": ">=4.0.0",
+    "fastify": ">=4.0.0",
+    "hono": ">=4.0.0"
   },
   "peerDependenciesMeta": {
     "express": {
-      "optional": false
+      "optional": true
+    },
+    "fastify": {
+      "optional": true
+    },
+    "hono": {
+      "optional": true
     }
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@types/express": "^5.0.6",
-    "@vitest/coverage-v8": "^4.1.4",
+    "@vitest/coverage-v8": "^4.1.5",
     "dotenv": "^17.4.2",
     "eslint": "^9.39.4",
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-unused-imports": "^4.4.1",
     "express": "^5.2.1",
+    "fastify": "^5.8.5",
+    "hono": "^4.12.14",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.0",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.5"
   }
 }
