@@ -1,5 +1,5 @@
-import { createAgentScoreCore } from '../core';
 import { denialReasonToBody } from '../_response';
+import { createAgentScoreCore } from '../core';
 import { extractPaymentSignerAddress, readX402PaymentHeader } from '../signer';
 import type {
   AgentIdentity,
