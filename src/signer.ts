@@ -1,5 +1,5 @@
 /**
- * Payment-signer extraction (TEC-226).
+ * Payment-signer extraction.
  *
  * Shared between merchants and the gate — both need to recover the on-chain signer from
  * a payment credential without duplicating code. Two rails carry a wallet signer:

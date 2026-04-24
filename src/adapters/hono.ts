@@ -51,7 +51,7 @@ function defaultOnDenied(c: Context, reason: DenialReason): Response {
   if (reason.poll_url) body.poll_url = reason.poll_url;
   if (reason.agent_instructions) body.agent_instructions = reason.agent_instructions;
   if (reason.agent_memory) body.agent_memory = reason.agent_memory;
-  // TEC-226 wallet-signer-match fields
+  // Wallet-signer-match fields
   if (reason.claimed_operator) body.claimed_operator = reason.claimed_operator;
   if (reason.actual_signer_operator !== undefined) body.actual_signer_operator = reason.actual_signer_operator;
   if (reason.expected_signer) body.expected_signer = reason.expected_signer;
@@ -136,7 +136,7 @@ export async function captureWallet(
 }
 
 /**
- * Verify the payment signer resolves to the same operator as the claimed `X-Wallet-Address` (TEC-226).
+ * Verify the payment signer resolves to the same operator as the claimed `X-Wallet-Address`.
  *
  * Call this AFTER the agent submits a payment credential, BEFORE settling. Returns:
  *
@@ -164,8 +164,8 @@ export async function verifyWalletSignerMatch(
   options?: { signer?: string | null; network?: 'evm' | 'solana' },
 ): Promise<VerifyWalletSignerResult> {
   const state = c.get(GATE_STATE_KEY) as GateState | undefined;
-  // No check when: not a wallet-auth request, OR both headers were sent (token wins,
-  // TEC-226 Section IV). Signer-match only runs on strict wallet-auth requests.
+  // No check when: not a wallet-auth request, OR both headers were sent (operator-token wins —
+  // the caller opted out of strict wallet-auth). Signer-match only runs on strict wallet-auth.
   if (!state?.walletAddress || state.operatorToken) {
     return { kind: 'pass', claimedOperator: null, signerOperator: null };
   }

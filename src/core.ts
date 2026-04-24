@@ -95,15 +95,16 @@ export type DenialCode =
   | 'api_error'
   | 'payment_required'
   | 'identity_verification_required'
-  // Added in 1.9.0 (TEC-226)
+  // Wallet-signer binding: claimed X-Wallet-Address must resolve to the same operator as
+  // the payment signer; wallet-auth is rejected on rails with no wallet signer.
   | 'wallet_signer_mismatch'
   | 'wallet_auth_requires_wallet_signing'
-  // Added in 1.9.0 (TEC-218): passed through from /v1/assess granular denials.
+  // Granular credential-state denials passed through from /v1/assess.
   | 'token_expired'
   | 'token_revoked';
 
 /**
- * Cross-merchant pattern hint emitted on bootstrap denials and session-create responses (TEC-227).
+ * Cross-merchant pattern hint emitted on bootstrap denials and session-create responses.
  * LLM-hosted agents should persist this to long-term memory so future AgentScore encounters skip
  * the cold-start session flow. Contents are the pattern, not secrets.
  */
@@ -128,7 +129,7 @@ export interface DenialReason {
   poll_secret?: string;
   poll_url?: string;
   agent_instructions?: string;
-  /** Cross-merchant memory hint (TEC-227). Emitted on bootstrap denials only by default. */
+  /** Cross-merchant memory hint. Emitted on bootstrap denials only by default. */
   agent_memory?: AgentMemoryHint;
   /** Full assess response when the denial came from `/v1/assess`. Lets consumers access fields
    *  not promoted to first-class DenialReason properties (e.g., `policy_result`). Undefined for
@@ -140,7 +141,7 @@ export interface DenialReason {
    *  response shape (e.g. to include a merchant-minted `order_id`). */
   extra?: Record<string, unknown>;
   // ---------------------------------------------------------------------------
-  // TEC-226 wallet-signer-match fields — populated for wallet_signer_mismatch only.
+  // Wallet-signer-match fields — populated for wallet_signer_mismatch only.
   // ---------------------------------------------------------------------------
   /** Operator id resolved from `X-Wallet-Address`. */
   claimed_operator?: string;
@@ -241,7 +242,7 @@ export interface AgentScoreCore {
    *  swallows non-fatal errors because capture is informational, not on the critical path. */
   captureWallet(options: CaptureWalletOptions): Promise<void>;
   /**
-   * Verify the payment signer resolves to the same operator as the claimed `X-Wallet-Address` (TEC-226).
+   * Verify the payment signer resolves to the same operator as the claimed `X-Wallet-Address`.
    *
    * Returns `pass` when the signer is linked to the same operator as the claimed wallet
    * (byte-equal wallets pass trivially; other wallets linked to the same operator also pass —
@@ -268,7 +269,7 @@ interface AssessResult {
 }
 
 /**
- * Build the cross-merchant memory hint emitted on bootstrap denials (TEC-227). Base URLs are
+ * Build the cross-merchant memory hint emitted on bootstrap denials. Base URLs are
  * derived from the gate's AgentScore API base so self-hosted / staging deployments get
  * correct pointers. Contents describe the AgentScore identity substrate in transferable
  * terms; merchant-specific context lives in other `agent_instructions` fields.
@@ -477,9 +478,9 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
         return { kind: 'deny', reason: { code: 'payment_required' } };
       }
 
-      // TEC-218: pass through granular denial codes the API emits (token_expired,
-      // token_revoked). Without this the gate would squash them to wallet_not_trusted
-      // and agents lose the actionable sub-code.
+      // Pass through granular denial codes the API emits (token_expired, token_revoked).
+      // Without this the gate would squash them to wallet_not_trusted and agents lose the
+      // actionable sub-code.
       if (response.status === 401) {
         try {
           const errData = (await response.clone().json()) as { error?: { code?: string }; next_steps?: unknown };
@@ -549,8 +550,10 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(API_TIMEOUT_MS),
       });
-    } catch {
-      // Silent — capture is fire-and-forget
+    } catch (err) {
+      // Fire-and-forget: don't throw. Log so a persistent capture outage is visible
+      // to merchant ops — otherwise wallet↔operator linkage silently stops.
+      console.warn('[agentscore-gate] captureWallet failed:', err instanceof Error ? err.message : err);
     }
   }
 
@@ -612,12 +615,38 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
     }
   }
 
+  function reportSignerEvent(kind: 'pass' | 'wallet_signer_mismatch' | 'wallet_auth_requires_wallet_signing' | 'api_error'): void {
+    // Fire-and-forget: surfaces mismatch-catch rate + api_error SLO on the dashboard.
+    // Never blocks, awaits, or throws — telemetry failure must not affect the gate's decision.
+    try {
+      const pending = fetch(`${baseUrl}/v1/telemetry/signer-match`, {
+        method: 'POST',
+        headers: {
+          'X-API-Key': apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'User-Agent': userAgentHeader,
+        },
+        body: JSON.stringify({ kind }),
+        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      });
+      if (pending && typeof pending.catch === 'function') {
+        pending.catch((err) => {
+          console.warn('[agentscore-gate] signer-match telemetry failed:', err instanceof Error ? err.message : err);
+        });
+      }
+    } catch {
+      // Thrown synchronously (e.g., fetch unavailable in test harness) — swallow silently.
+    }
+  }
+
   async function verifyWalletSignerMatch(
     options: VerifyWalletSignerMatchOptions,
   ): Promise<VerifyWalletSignerResult> {
     const { claimedWallet, signer } = options;
 
     if (!signer) {
+      reportSignerEvent('wallet_auth_requires_wallet_signing');
       return { kind: 'wallet_auth_requires_wallet_signing', claimedWallet };
     }
 
@@ -626,6 +655,7 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
 
     // Byte-equal short-circuit — no API lookup; same wallet ≡ same operator by definition.
     if (claimedLower === signerLower) {
+      reportSignerEvent('pass');
       return { kind: 'pass', claimedOperator: null, signerOperator: null };
     }
 
@@ -637,6 +667,7 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
     // Transient API failure on either resolve → emit api_error. Caller should retry or
     // surface 503 rather than falsely reject a legitimate user on a network flake.
     if (!claimedResolve.ok || !signerResolve.ok) {
+      reportSignerEvent('api_error');
       return { kind: 'api_error', claimedWallet: claimedLower };
     }
 
@@ -644,9 +675,11 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
     const signerOperator = signerResolve.operator;
 
     if (claimedOperator && signerOperator && claimedOperator === signerOperator) {
+      reportSignerEvent('pass');
       return { kind: 'pass', claimedOperator, signerOperator };
     }
 
+    reportSignerEvent('wallet_signer_mismatch');
     return {
       kind: 'wallet_signer_mismatch',
       claimedOperator,

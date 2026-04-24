@@ -120,7 +120,7 @@ export async function captureWallet(
 }
 
 /**
- * Verify the payment signer resolves to the same operator as the claimed X-Wallet-Address (TEC-226).
+ * Verify the payment signer resolves to the same operator as the claimed X-Wallet-Address.
  * Pass `options.signer` explicitly (extracted from the payment credential); no auto-extraction
  * because Fastify's request isn't a Fetch Request.
  */
@@ -129,7 +129,7 @@ export async function verifyWalletSignerMatch(
   options: { signer: string | null; network?: 'evm' | 'solana' },
 ): Promise<VerifyWalletSignerResult> {
   const state = (request as unknown as Record<string, GateState | undefined>)[GATE_STATE_KEY];
-  // Section IV: token wins when both headers sent — signer-match must no-op.
+  // Operator-token wins when both headers sent — signer-match must no-op on non-strict-wallet-auth.
   if (!state?.walletAddress || state.operatorToken) {
     return { kind: 'pass', claimedOperator: null, signerOperator: null };
   }

@@ -36,9 +36,9 @@ export type GuardResult =
         network: 'evm' | 'solana';
         idempotencyKey?: string;
       }) => Promise<void>;
-      /** Verify the payment signer matches the claimed X-Wallet-Address (TEC-226). Bound
-       *  only when the request was wallet-authenticated. Pass `opts.signer` explicitly or
-       *  omit to auto-extract from the original `Request`. */
+      /** Verify the payment signer matches the claimed X-Wallet-Address. Bound only when
+       *  the request was wallet-authenticated. Pass `opts.signer` explicitly or omit to
+       *  auto-extract from the original `Request`. */
       verifyWalletSignerMatch?: (opts?: {
         signer?: string | null;
         network?: 'evm' | 'solana';

@@ -21,7 +21,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('buildAgentMemoryHint (TEC-227)', () => {
+describe('buildAgentMemoryHint', () => {
   it('surfaces on identity_verification_required denials through the hono adapter', async () => {
     // First fetch: POST /v1/sessions → session created (triggers identity_verification_required)
     mockFetchSequence([
@@ -69,12 +69,12 @@ describe('buildAgentMemoryHint (TEC-227)', () => {
   });
 });
 
-describe('AgentScoreCore.verifyWalletSignerMatch (TEC-226)', () => {
+describe('AgentScoreCore.verifyWalletSignerMatch', () => {
   const WALLET_A = '0x1111111111111111111111111111111111111111';
   const WALLET_B = '0x2222222222222222222222222222222222222222';
 
-  it('returns pass (byte-equal) without any API calls', async () => {
-    global.fetch = vi.fn();  // should never fire
+  it('returns pass (byte-equal) without any /v1/assess lookup', async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({}) });
     const core = createAgentScoreCore({ apiKey: API_KEY });
 
     const result = await core.verifyWalletSignerMatch({
@@ -83,7 +83,11 @@ describe('AgentScoreCore.verifyWalletSignerMatch (TEC-226)', () => {
     });
 
     expect(result.kind).toBe('pass');
-    expect(global.fetch).not.toHaveBeenCalled();
+    // Only the fire-and-forget telemetry call is allowed — no /v1/assess lookup.
+    const assessCalls = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes('/v1/assess'),
+    );
+    expect(assessCalls).toHaveLength(0);
   });
 
   it('returns pass when both wallets resolve to the same operator', async () => {
@@ -145,7 +149,7 @@ describe('AgentScoreCore.verifyWalletSignerMatch (TEC-226)', () => {
   });
 
   it('returns wallet_auth_requires_wallet_signing when signer is null (SPT/card)', async () => {
-    global.fetch = vi.fn();  // should never fire
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({}) });
     const core = createAgentScoreCore({ apiKey: API_KEY });
 
     const result = await core.verifyWalletSignerMatch({
@@ -157,7 +161,11 @@ describe('AgentScoreCore.verifyWalletSignerMatch (TEC-226)', () => {
     if (result.kind === 'wallet_auth_requires_wallet_signing') {
       expect(result.claimedWallet).toBe(WALLET_A);
     }
-    expect(global.fetch).not.toHaveBeenCalled();
+    // No /v1/assess lookup — only the fire-and-forget telemetry ping is allowed.
+    const assessCalls = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes('/v1/assess'),
+    );
+    expect(assessCalls).toHaveLength(0);
   });
 
   it('returns api_error on transient resolve failure — does not conflate with mismatch', async () => {
@@ -174,6 +182,49 @@ describe('AgentScoreCore.verifyWalletSignerMatch (TEC-226)', () => {
     if (result.kind === 'api_error') {
       expect(result.claimedWallet).toBe(WALLET_A.toLowerCase());
     }
+  });
+});
+
+describe('AgentScoreCore.verifyWalletSignerMatch — telemetry', () => {
+  const TELEMETRY_WALLET = '0x1111111111111111111111111111111111111111';
+
+  it('fire-and-forget posts the kind to /v1/telemetry/signer-match', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({}) });
+    global.fetch = fetchMock;
+    const core = createAgentScoreCore({ apiKey: API_KEY });
+
+    await core.verifyWalletSignerMatch({ claimedWallet: TELEMETRY_WALLET, signer: TELEMETRY_WALLET });
+
+    const telemetryCalls = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && (call[0] as string).includes('/v1/telemetry/signer-match'),
+    );
+    expect(telemetryCalls).toHaveLength(1);
+    const body = JSON.parse(telemetryCalls[0]![1]!.body as string) as { kind: string };
+    expect(body.kind).toBe('pass');
+  });
+
+  it('reports wallet_auth_requires_wallet_signing on null signer', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({}) });
+    global.fetch = fetchMock;
+    const core = createAgentScoreCore({ apiKey: API_KEY });
+
+    await core.verifyWalletSignerMatch({ claimedWallet: TELEMETRY_WALLET, signer: null });
+
+    const telemetryCalls = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && (call[0] as string).includes('/v1/telemetry/signer-match'),
+    );
+    expect(telemetryCalls).toHaveLength(1);
+    const body = JSON.parse(telemetryCalls[0]![1]!.body as string) as { kind: string };
+    expect(body.kind).toBe('wallet_auth_requires_wallet_signing');
+  });
+
+  it('telemetry failure never throws', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error('telemetry outage'));
+    const core = createAgentScoreCore({ apiKey: API_KEY });
+
+    // Must not throw — gate decision is independent of telemetry.
+    const result = await core.verifyWalletSignerMatch({ claimedWallet: TELEMETRY_WALLET, signer: TELEMETRY_WALLET });
+    expect(result.kind).toBe('pass');
   });
 });
 
@@ -289,5 +340,93 @@ describe('verifyWalletSignerMatch hono helper', () => {
     });
     const body = await res.json() as Record<string, unknown>;
     expect(body.kind).toBe('wallet_auth_requires_wallet_signing');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-adapter no-op parity — operator-token wins when both headers are sent.
+// Each adapter has its own state-stashing location; verify the wrapper reads it
+// correctly and short-circuits before any API call.
+// ---------------------------------------------------------------------------
+
+describe('verifyWalletSignerMatch adapter parity — both headers no-op', () => {
+  beforeEach(() => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        decision: 'allow',
+        decision_reasons: [],
+        resolved_operator: 'op_token_holder',
+      }),
+    } as unknown as Response);
+  });
+
+  it('express adapter no-ops when both headers sent', async () => {
+    const { agentscoreGate: expressGate, verifyWalletSignerMatch: expressVerify } =
+      await import('../src/adapters/express');
+
+    const mw = expressGate({ apiKey: API_KEY });
+    const req = {
+      headers: {
+        'x-operator-token': 'opc_test',
+        'x-wallet-address': '0xaaa0000000000000000000000000000000000000',
+      },
+    } as unknown as import('express').Request;
+    const res = { status: vi.fn().mockReturnValue({ json: vi.fn() }) } as unknown as import('express').Response;
+    const next = vi.fn();
+    await mw(req, res, next);
+
+    // Any signer — if the no-op weren't honored, this would mismatch against the claimed wallet.
+    const result = await expressVerify(req, { signer: '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef' });
+    expect(result.kind).toBe('pass');
+    expect((result as { claimedOperator: string | null }).claimedOperator).toBeNull();
+  });
+
+  it('fastify adapter no-ops when both headers sent', async () => {
+    const fastifyMod = await import('fastify').catch(() => null);
+    if (!fastifyMod) { return; } // skip if fastify not installed in this env
+    const { default: Fastify } = fastifyMod;
+    const { agentscoreGate: fastifyPlugin, verifyWalletSignerMatch: fastifyVerify } =
+      await import('../src/adapters/fastify');
+
+    const app = Fastify();
+    await app.register(fastifyPlugin, { apiKey: API_KEY });
+    app.get('/test', async (req) => {
+      const result = await fastifyVerify(req, { signer: '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef' });
+      return result;
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/test',
+      headers: {
+        'x-operator-token': 'opc_test',
+        'x-wallet-address': '0xaaa0000000000000000000000000000000000000',
+      },
+    });
+    const body = res.json() as Record<string, unknown>;
+    expect(body.kind).toBe('pass');
+    expect(body.claimedOperator).toBeNull();
+    await app.close();
+  });
+
+  it('web (fetch) adapter does not bind verifyWalletSignerMatch when both headers sent', async () => {
+    // Web adapter's no-op is to NOT bind the helper at all on operator-token requests.
+    // Consumers check for `verifyWalletSignerMatch` undefined before calling.
+    const { createAgentScoreGate } = await import('../src/adapters/web');
+    const guard = createAgentScoreGate({ apiKey: API_KEY });
+
+    const req = new Request('http://localhost/test', {
+      headers: {
+        'x-operator-token': 'opc_test',
+        'x-wallet-address': '0xaaa0000000000000000000000000000000000000',
+      },
+    });
+    const outcome = await guard(req);
+    expect(outcome.allowed).toBe(true);
+    if (outcome.allowed) {
+      expect(outcome.verifyWalletSignerMatch).toBeUndefined();
+    }
   });
 });
