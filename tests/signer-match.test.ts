@@ -159,6 +159,72 @@ describe('AgentScoreCore.verifyWalletSignerMatch (TEC-226)', () => {
     }
     expect(global.fetch).not.toHaveBeenCalled();
   });
+
+  it('returns api_error on transient resolve failure — does not conflate with mismatch', async () => {
+    // Simulate /v1/assess returning 503 for both resolve calls.
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 } as unknown as Response);
+    const core = createAgentScoreCore({ apiKey: API_KEY });
+
+    const result = await core.verifyWalletSignerMatch({
+      claimedWallet: WALLET_A,
+      signer: WALLET_B,
+    });
+
+    expect(result.kind).toBe('api_error');
+    if (result.kind === 'api_error') {
+      expect(result.claimedWallet).toBe(WALLET_A.toLowerCase());
+    }
+  });
+});
+
+describe('AgentScoreCore.verifyWalletSignerMatch — Section IV (both headers)', () => {
+  it('hono adapter no-ops signer check when both headers sent', async () => {
+    // Simulate a request with both X-Operator-Token and X-Wallet-Address — token should win
+    // and the wrapper must not run a signer check at all.
+    const { Hono } = await import('hono');
+    const { agentscoreGate, verifyWalletSignerMatch } = await import('../src/adapters/hono');
+
+    // Gate allow on the operator token.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        decision: 'allow',
+        decision_reasons: [],
+        resolved_operator: 'op_token_holder',
+      }),
+    } as unknown as Response);
+
+    const app = new Hono();
+    app.use('*', agentscoreGate({ apiKey: API_KEY }));
+    app.get('/test', async (c) => {
+      // A signer that would NOT match the wallet — if signer check ran, it would reject.
+      const result = await verifyWalletSignerMatch(c, { signer: '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef' });
+      return c.json(result);
+    });
+
+    const res = await app.request('/test', {
+      headers: {
+        'x-operator-token': 'opc_test',
+        'x-wallet-address': '0xaaa0000000000000000000000000000000000000',
+      },
+    });
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.kind).toBe('pass');
+    expect(body.claimedOperator).toBeNull();
+  });
+});
+
+describe('buildAgentMemoryHint — hardcoded canonical URLs', () => {
+  it('ignores merchant baseUrl to prevent cross-merchant phishing', async () => {
+    const { buildAgentMemoryHint } = await import('../src/core');
+    // Even if a malicious merchant configured their gate with baseUrl pointing at their own
+    // evil endpoint, the agent memory must always advertise the canonical AgentScore API so
+    // an agent following the memory hint doesn't leak credentials to a rogue merchant.
+    const hint = buildAgentMemoryHint('https://evil.example.com');
+    expect(hint.identity_check_endpoint).toBe('https://api.agentscore.sh/v1/credentials');
+    expect(hint.list_wallets_endpoint).toBe('https://api.agentscore.sh/v1/credentials/wallets');
+  });
 });
 
 describe('verifyWalletSignerMatch hono helper', () => {

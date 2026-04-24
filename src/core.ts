@@ -220,7 +220,11 @@ export type VerifyWalletSignerResult =
       actualSigner: string;
       linkedWallets: string[];
     }
-  | { kind: 'wallet_auth_requires_wallet_signing'; claimedWallet: string };
+  | { kind: 'wallet_auth_requires_wallet_signing'; claimedWallet: string }
+  // Transient — the resolve call to /v1/assess failed or timed out. Caller should
+  // retry or surface as 503. Distinct from wallet_signer_mismatch (which is an actual
+  // security reject) so legitimate users don't get rejected on network flakes.
+  | { kind: 'api_error'; claimedWallet: string };
 
 export interface AgentScoreCore {
   /**
@@ -266,8 +270,17 @@ interface AssessResult {
  * correct pointers. Contents describe the AgentScore identity substrate in transferable
  * terms; merchant-specific context lives in other `agent_instructions` fields.
  */
-export function buildAgentMemoryHint(baseUrl: string): AgentMemoryHint {
-  const api = stripTrailingSlashes(baseUrl);
+// Canonical production AgentScore API — used as the authoritative source for endpoint pointers
+// emitted to agent memory regardless of how a given merchant configured their gate's baseUrl.
+// Hardcoded so a malicious merchant can't set `baseUrl: "evil.com"` and phish agents into
+// sending their credentials to attacker-controlled endpoints.
+const CANONICAL_AGENTSCORE_API = 'https://api.agentscore.sh';
+
+export function buildAgentMemoryHint(_baseUrl?: string): AgentMemoryHint {
+  // _baseUrl is kept in the signature for backwards compat but deliberately ignored —
+  // agent memory pointers must always point at the canonical production API to prevent
+  // merchant-initiated phishing across the cross-merchant memory surface.
+  const api = CANONICAL_AGENTSCORE_API;
   return {
     save_for_future_agentscore_gates: true,
     pattern_summary:
@@ -516,16 +529,38 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
     }
   }
 
-  // Resolve a wallet address to its operator id via /v1/assess. Returns null on any error
-  // (including unlinked wallets, which /v1/assess may respond to with `resolved_operator: null`
-  // or a wallet_not_trusted decision — both collapse to "unknown operator" for our purposes).
-  async function resolveWalletToOperator(walletAddress: string): Promise<string | null> {
+  /**
+   * Resolve a wallet to its operator id via /v1/assess.
+   *
+   * Returns:
+   *   - `{ ok: true, operator: <id> }` — wallet is linked to that operator
+   *   - `{ ok: true, operator: null }` — wallet is valid but not linked to any operator
+   *   - `{ ok: false }` — the API call failed (network, timeout, non-2xx). Distinguishable so
+   *     callers can emit `api_error` instead of falsely asserting "no operator linked".
+   *
+   * Checks the main evaluate() cache before making a fresh call — if the gate already
+   * resolved this wallet during identity evaluation, we have the resolved_operator already.
+   */
+  async function resolveWalletToOperator(
+    walletAddress: string,
+  ): Promise<{ ok: true; operator: string | null } | { ok: false }> {
+    const wallet = walletAddress.toLowerCase();
+
+    // Cache lookup — first the plain cache (populated by evaluate() for identity-headered wallets).
+    // Saves a second /v1/assess call when the gate already looked up this wallet.
+    const plainCached = cache.get(wallet);
+    if (plainCached?.raw) {
+      const op = (plainCached.raw as Record<string, unknown>).resolved_operator;
+      if (op === null || typeof op === 'string') return { ok: true, operator: op };
+    }
+    // Fall back to the resolve-specific cache (populated by previous calls to this function).
+    const resolveCached = cache.get(`resolve:${wallet}`);
+    if (resolveCached?.raw) {
+      const op = (resolveCached.raw as Record<string, unknown>).resolved_operator;
+      if (op === null || typeof op === 'string') return { ok: true, operator: op };
+    }
+
     try {
-      const cacheKey = `resolve:${walletAddress.toLowerCase()}`;
-      const cached = cache.get(cacheKey);
-      if (cached) {
-        return (cached.raw as Record<string, unknown> | undefined)?.resolved_operator as string | null;
-      }
       const response = await fetch(`${baseUrl}/v1/assess`, {
         method: 'POST',
         headers: {
@@ -537,13 +572,13 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
         body: JSON.stringify({ address: walletAddress }),
         signal: AbortSignal.timeout(API_TIMEOUT_MS),
       });
-      if (!response.ok) return null;
+      if (!response.ok) return { ok: false };
       const data = (await response.json()) as Record<string, unknown>;
-      cache.set(cacheKey, { allow: true, raw: data });
+      cache.set(`resolve:${wallet}`, { allow: true, raw: data });
       const op = data.resolved_operator;
-      return typeof op === 'string' ? op : null;
+      return { ok: true, operator: typeof op === 'string' ? op : null };
     } catch {
-      return null;
+      return { ok: false };
     }
   }
 
@@ -564,10 +599,19 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
       return { kind: 'pass', claimedOperator: null, signerOperator: null };
     }
 
-    const [claimedOperator, signerOperator] = await Promise.all([
+    const [claimedResolve, signerResolve] = await Promise.all([
       resolveWalletToOperator(claimedLower),
       resolveWalletToOperator(signerLower),
     ]);
+
+    // Transient API failure on either resolve → emit api_error. Caller should retry or
+    // surface 503 rather than falsely reject a legitimate user on a network flake.
+    if (!claimedResolve.ok || !signerResolve.ok) {
+      return { kind: 'api_error', claimedWallet: claimedLower };
+    }
+
+    const claimedOperator = claimedResolve.operator;
+    const signerOperator = signerResolve.operator;
 
     if (claimedOperator && signerOperator && claimedOperator === signerOperator) {
       return { kind: 'pass', claimedOperator, signerOperator };

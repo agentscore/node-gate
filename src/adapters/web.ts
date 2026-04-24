@@ -107,7 +107,8 @@ export function createAgentScoreGate(options: AgentScoreGateOptions): (req: Requ
         ? (opts: { walletAddress: string; network: 'evm' | 'solana'; idempotencyKey?: string }) =>
             core.captureWallet({ operatorToken: identity.operatorToken!, ...opts })
         : undefined;
-      const verifyWalletSignerMatchBound = identity?.address
+      // Section IV: token wins when both headers sent — bind helper only on strict wallet-auth.
+      const verifyWalletSignerMatchBound = identity?.address && !identity?.operatorToken
         ? async (opts?: { signer?: string | null; network?: 'evm' | 'solana' }) => {
             const signer =
               opts?.signer !== undefined

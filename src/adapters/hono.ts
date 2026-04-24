@@ -164,8 +164,9 @@ export async function verifyWalletSignerMatch(
   options?: { signer?: string | null; network?: 'evm' | 'solana' },
 ): Promise<VerifyWalletSignerResult> {
   const state = c.get(GATE_STATE_KEY) as GateState | undefined;
-  if (!state?.walletAddress) {
-    // Not a wallet-auth request — no check applies.
+  // No check when: not a wallet-auth request, OR both headers were sent (token wins,
+  // TEC-226 Section IV). Signer-match only runs on strict wallet-auth requests.
+  if (!state?.walletAddress || state.operatorToken) {
     return { kind: 'pass', claimedOperator: null, signerOperator: null };
   }
 

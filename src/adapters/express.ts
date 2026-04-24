@@ -118,7 +118,8 @@ export async function verifyWalletSignerMatch(
   options: { signer: string | null; network?: 'evm' | 'solana' },
 ): Promise<VerifyWalletSignerResult> {
   const state = (req as unknown as Record<string, GateState | undefined>)[GATE_STATE_KEY];
-  if (!state?.walletAddress) {
+  // Section IV: token wins when both headers sent — signer-match must no-op.
+  if (!state?.walletAddress || state.operatorToken) {
     return { kind: 'pass', claimedOperator: null, signerOperator: null };
   }
   return state.core.verifyWalletSignerMatch({
