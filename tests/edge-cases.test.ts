@@ -236,9 +236,10 @@ describe('invalid wallet header edge cases', () => {
     expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_identity' }));
   });
 
-  it('missing_identity body carries next_steps.action: send_existing_identity', async () => {
-    // TEC-218 phase 1: bare bootstrap denial hints agents to try stored identity first
-    // (returning-customer fast path) before running the cold-start session flow.
+  it('missing_identity body carries probe_identity_then_session instructions', async () => {
+    // Bare bootstrap denial describes the full probe strategy — wallet-first on
+    // signing rails, fall back to stored opc_..., fall back to session flow — so
+    // agents without durable memory recover in at most one extra round trip.
     const mw = agentscoreGate({ apiKey: API_KEY });
     const req = makeReq();
     const { res, json } = makeRes();
@@ -248,8 +249,10 @@ describe('invalid wallet header edge cases', () => {
     expect(body.error).toBe('missing_identity');
     expect(body.agent_instructions).toBeDefined();
     const instructions = JSON.parse(body.agent_instructions as string) as Record<string, unknown>;
-    expect(instructions.action).toBe('send_existing_identity');
-    expect(instructions.user_message).toMatch(/stored operator_token|wallet/i);
+    expect(instructions.action).toBe('probe_identity_then_session');
+    expect(Array.isArray(instructions.steps)).toBe(true);
+    expect((instructions.steps as string[]).length).toBeGreaterThanOrEqual(3);
+    expect(instructions.user_message).toMatch(/X-Wallet-Address|X-Operator-Token/);
     // agent_memory still present for cross-merchant pattern hint
     expect(body.agent_memory).toBeDefined();
   });

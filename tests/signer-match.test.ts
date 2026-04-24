@@ -127,6 +127,11 @@ describe('AgentScoreCore.verifyWalletSignerMatch', () => {
       expect(result.actualSignerOperator).toBe('op_signer');
       expect(result.expectedSigner).toBe(WALLET_A.toLowerCase());
       expect(result.actualSigner).toBe(WALLET_B.toLowerCase());
+      expect(result.agentInstructions).toContain('resign_or_switch_to_operator_token');
+      expect(result.agentInstructions).toContain('linked_wallets');
+      // user_message lives INSIDE agent_instructions (single source of truth).
+      const instr = JSON.parse(result.agentInstructions) as { user_message: string };
+      expect(instr.user_message).toMatch(/operator/i);
     }
   });
 
@@ -160,6 +165,9 @@ describe('AgentScoreCore.verifyWalletSignerMatch', () => {
     expect(result.kind).toBe('wallet_auth_requires_wallet_signing');
     if (result.kind === 'wallet_auth_requires_wallet_signing') {
       expect(result.claimedWallet).toBe(WALLET_A);
+      expect(result.agentInstructions).toContain('switch_to_operator_token');
+      const instr = JSON.parse(result.agentInstructions) as { user_message: string };
+      expect(instr.user_message).toMatch(/wallet-signing rails|Wallet-address identity/);
     }
     // No /v1/assess lookup — only the fire-and-forget telemetry ping is allowed.
     const assessCalls = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(

@@ -17,7 +17,18 @@ Types: `AgentIdentity`, `CreateSessionOnMissing`, `DenialReason` (with `missing_
 
 ### Wallet-signer binding
 
-Every adapter (Hono, Express, Fastify, Next.js, Web) exposes `verifyWalletSignerMatch(ctx, options?)`. Call AFTER the agent submits a payment credential, BEFORE settlement. Auto-extracts the signer from MPP (`Authorization: Payment`) or x402 (`payment-signature` / `x-payment`) headers; pass `options.signer` to override. Returns a `VerifyWalletSignerResult` with `kind: "pass" | "wallet_signer_mismatch" | "wallet_auth_requires_wallet_signing"`. Non-pass variants include `claimedOperator`, `actualSignerOperator`, `expectedSigner`, `actualSigner`, `linkedWallets` (same-operator sibling wallets that would also be accepted). No-ops for operator-token requests or when both identity headers were sent. The shared body marshaller lives in `src/_response.ts`.
+Every adapter (Hono, Express, Fastify, Next.js, Web) exposes `verifyWalletSignerMatch(ctx, options?)`. Call AFTER the agent submits a payment credential, BEFORE settlement. Auto-extracts the signer from MPP (`Authorization: Payment`) or x402 (`payment-signature` / `x-payment`) headers; pass `options.signer` to override. Returns a `VerifyWalletSignerResult` with `kind: "pass" | "wallet_signer_mismatch" | "wallet_auth_requires_wallet_signing"`. Non-pass variants include `claimedOperator`, `actualSignerOperator`, `expectedSigner`, `actualSigner`, `linkedWallets` (same-operator sibling wallets that would also be accepted), plus `agentInstructions` — a JSON-encoded `{action, steps, user_message}` block merchants can spread directly into the 403 body. No-ops for operator-token requests or when both identity headers were sent. The shared body marshaller lives in `src/_response.ts`.
+
+### Action copy on denials (agent_instructions convention)
+
+Every gate-emitted denial carries an `agent_instructions` JSON string (`{action, steps, user_message}`) so agents see a concrete recovery path inside the response — no discovery-doc round trip. The canned copies live in `src/core.ts`:
+
+- `missing_identity` → `probe_identity_then_session` (try wallet on signing rails, fall back to opc_..., fall back to session flow)
+- `wallet_signer_mismatch` → `resign_or_switch_to_operator_token` (re-sign from `expectedSigner` / any `linkedWallets`, or drop the wallet header and use opc_...)
+- `wallet_auth_requires_wallet_signing` → `switch_to_operator_token` (non-signing rail; drop wallet header)
+- `token_expired` / `token_revoked` — the API emits `next_steps` and the gate stringifies it as `agent_instructions` on pass-through.
+
+Convention is consistent with the API's structured `next_steps` responses: same `{action, user_message}` shape, but the gate wraps it as a JSON string inside `agent_instructions`. `user_message` always lives INSIDE (never duplicated at top level).
 
 ### Cross-merchant agent memory
 

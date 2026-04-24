@@ -223,8 +223,15 @@ export type VerifyWalletSignerResult =
       expectedSigner: string;
       actualSigner: string;
       linkedWallets: string[];
+      /** JSON-encoded action copy (action + steps + user_message). Spread into the 403 body
+       *  verbatim so agents get a concrete recovery path inside the denial response itself. */
+      agentInstructions: string;
     }
-  | { kind: 'wallet_auth_requires_wallet_signing'; claimedWallet: string }
+  | {
+      kind: 'wallet_auth_requires_wallet_signing';
+      claimedWallet: string;
+      agentInstructions: string;
+    }
   // Transient — the resolve call to /v1/assess failed or timed out. Caller should
   // retry or surface as 503. Distinct from wallet_signer_mismatch (which is an actual
   // security reject) so legitimate users don't get rejected on network flakes.
@@ -279,6 +286,29 @@ interface AssessResult {
 // Hardcoded so a malicious merchant can't set `baseUrl: "evil.com"` and phish agents into
 // sending their credentials to attacker-controlled endpoints.
 const CANONICAL_AGENTSCORE_API = 'https://api.agentscore.sh';
+
+// JSON-encoded action copy emitted on wallet-signer-match denials. Spread into 403 bodies
+// by merchants so agents get a concrete recovery path inside the denial response itself —
+// no discovery-doc round trip required.
+const WALLET_SIGNER_MISMATCH_INSTRUCTIONS = JSON.stringify({
+  action: 'resign_or_switch_to_operator_token',
+  steps: [
+    'Preferred: re-submit the payment signed by expected_signer (or any entry in linked_wallets — same-operator wallets are fungible) and retry with the same X-Wallet-Address.',
+    'Alternative: drop X-Wallet-Address and retry with X-Operator-Token. Use a stored opc_... if you have one; otherwise call POST /v1/credentials or run the session/verify flow to mint one.',
+  ],
+  user_message:
+    'The payment signer resolves to a different operator than X-Wallet-Address. Re-sign from expected_signer or any linked_wallets entry, or switch to X-Operator-Token.',
+});
+
+const WALLET_AUTH_REQUIRES_WALLET_SIGNING_INSTRUCTIONS = JSON.stringify({
+  action: 'switch_to_operator_token',
+  steps: [
+    'This payment rail (Stripe SPT, card) carries no wallet signature — X-Wallet-Address cannot be verified against the payment.',
+    'Drop X-Wallet-Address and retry with X-Operator-Token. If you do not have a stored opc_..., retry with no identity header to receive a verification session.',
+  ],
+  user_message:
+    'Wallet-address identity is only supported on wallet-signing rails (Tempo MPP, x402). On Stripe or card, use X-Operator-Token instead.',
+});
 
 export function buildAgentMemoryHint(_baseUrl?: string): AgentMemoryHint {
   // _baseUrl is kept in the signature for backwards compat but deliberately ignored —
@@ -425,13 +455,18 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
         }
       }
 
-      // Bare missing-identity denial (no session was auto-created). Hint the agent to
-      // try a stored operator_token or linked wallet before running the cold-start
-      // session flow — the fast path for returning customers.
+      // Bare missing-identity denial (no session was auto-created). Describe the probe
+      // strategy so agents without memory can recover in one round trip: try wallet
+      // first on signing rails, fall back to stored opc_..., fall back to session flow.
       const missingIdentityInstructions = JSON.stringify({
-        action: 'send_existing_identity',
+        action: 'probe_identity_then_session',
+        steps: [
+          'If you have a wallet in hand AND this merchant accepts a wallet-signing rail (Tempo MPP or x402 — see openapi.json x-payment-info): send X-Wallet-Address and retry. If the wallet is linked to an AgentScore operator anywhere (via prior SIWE claim or prior captureWallet), this passes in one round trip.',
+          'If step 1 is denied (wallet_signer_mismatch, unknown_address, or missing_kyc) OR you already have a stored operator_token: send X-Operator-Token: opc_... and retry.',
+          'If neither works: retry with NO identity header. The 403 will include verify_url + session_id + poll_secret. Share verify_url with the user, then poll poll_url every 5s with X-Poll-Secret until status=verified — the poll response returns a one-time operator_token.',
+        ],
         user_message:
-          'If you have a stored operator_token or a wallet previously linked on any AgentScore merchant, send it (X-Operator-Token or X-Wallet-Address) and retry. Otherwise, follow the session/verify flow described in agent_memory.bootstrap.',
+          'Try X-Wallet-Address first if you have a wallet and the merchant accepts Tempo/x402; fall back to a stored X-Operator-Token, then to the session/verify flow described in agent_memory.bootstrap.',
       });
       return {
         kind: 'deny',
@@ -662,7 +697,11 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
 
     if (!signer) {
       reportSignerEvent('wallet_auth_requires_wallet_signing');
-      return { kind: 'wallet_auth_requires_wallet_signing', claimedWallet };
+      return {
+        kind: 'wallet_auth_requires_wallet_signing',
+        claimedWallet,
+        agentInstructions: WALLET_AUTH_REQUIRES_WALLET_SIGNING_INSTRUCTIONS,
+      };
     }
 
     const claimedLower = claimedWallet.toLowerCase();
@@ -704,6 +743,7 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
       // Populated from /v1/assess.linked_wallets on the claimed wallet — the full set of
       // wallets the agent CAN sign with to satisfy the claim (same-operator rule).
       linkedWallets: claimedResolve.linkedWallets,
+      agentInstructions: WALLET_SIGNER_MISMATCH_INSTRUCTIONS,
     };
   }
 
