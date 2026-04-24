@@ -97,7 +97,10 @@ export type DenialCode =
   | 'identity_verification_required'
   // Added in 1.9.0 (TEC-226)
   | 'wallet_signer_mismatch'
-  | 'wallet_auth_requires_wallet_signing';
+  | 'wallet_auth_requires_wallet_signing'
+  // Added in 1.9.0 (TEC-218): passed through from /v1/assess granular denials.
+  | 'token_expired'
+  | 'token_revoked';
 
 /**
  * Cross-merchant pattern hint emitted on bootstrap denials and session-create responses (TEC-227).
@@ -472,6 +475,28 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
       if (response.status === 402) {
         if (failOpen) return { kind: 'allow' };
         return { kind: 'deny', reason: { code: 'payment_required' } };
+      }
+
+      // TEC-218: pass through granular denial codes the API emits (token_expired,
+      // token_revoked). Without this the gate would squash them to wallet_not_trusted
+      // and agents lose the actionable sub-code.
+      if (response.status === 401) {
+        try {
+          const errData = (await response.clone().json()) as { error?: { code?: string }; next_steps?: unknown };
+          const code = errData?.error?.code;
+          if (code === 'token_expired' || code === 'token_revoked') {
+            return {
+              kind: 'deny',
+              reason: {
+                code,
+                data: errData as unknown as AgentScoreData,
+                ...(errData.next_steps ? { agent_instructions: JSON.stringify(errData.next_steps) } : {}),
+              },
+            };
+          }
+        } catch {
+          // Fall through to generic error handling if the body isn't the expected shape.
+        }
       }
 
       if (!response.ok) {
