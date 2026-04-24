@@ -6,14 +6,22 @@ Trust-gating middleware for Node.js web frameworks using AgentScore. Ships frame
 
 The gate supports two identity types via the `extractIdentity` option (backwards compatible with `extractAddress`):
 
-- **Wallet address** — `X-Wallet-Address` header (existing)
-- **Operator token** — `X-Operator-Token` header (new)
+- **Wallet address** — `X-Wallet-Address` header
+- **Operator token** — `X-Operator-Token` header
 
 Default behavior checks `X-Operator-Token` first, then `X-Wallet-Address`. The extracted identity is sent to AgentScore's `/v1/assess` endpoint as either `address` or `operator_token`.
 
-New types: `AgentIdentity`, `CreateSessionOnMissing`, updated `DenialReason` (adds `missing_identity` code).
+Types: `AgentIdentity`, `CreateSessionOnMissing`, `DenialReason` (with `missing_identity`, `token_expired`, `token_revoked`, `wallet_signer_mismatch`, `wallet_auth_requires_wallet_signing` + the legacy codes), `VerifyWalletSignerMatchOptions`, `VerifyWalletSignerResult`.
 
 `createSessionOnMissing` option: when set and no identity found, creates a verification session and returns 403 with verify_url + poll instructions instead of a bare denial. Two optional hooks let merchants bring per-request context: `getSessionOptions(ctx)` overrides `context`/`productName` per request (sync or async), and `onBeforeSession(ctx, session)` runs a side effect after the session mints with its return dict merged into `DenialReason.extra` (surfaces in the 403 body). Both receive the framework-native context (Hono `Context`, Express `Request`, etc.). Hook errors are swallowed with a log.
+
+### Wallet-signer binding
+
+Every adapter (Hono, Express, Fastify, Next.js, Web) exposes `verifyWalletSignerMatch(ctx, options?)`. Call AFTER the agent submits a payment credential, BEFORE settlement. Auto-extracts the signer from MPP (`Authorization: Payment`) or x402 (`payment-signature` / `x-payment`) headers; pass `options.signer` to override. Returns a `VerifyWalletSignerResult` with `kind: "pass" | "wallet_signer_mismatch" | "wallet_auth_requires_wallet_signing"`. Non-pass variants include `claimedOperator`, `actualSignerOperator`, `expectedSigner`, `actualSigner`, `linkedWallets` (same-operator sibling wallets that would also be accepted). No-ops for operator-token requests or when both identity headers were sent. The shared body marshaller lives in `src/_response.ts`.
+
+### Cross-merchant agent memory
+
+`DenialReason.agentMemory` carries the cross-merchant bootstrap hint (via `buildAgentMemoryHint(baseUrl)`). Emitted on `missing_identity` denials with no auto-session. The `_response.ts` marshaller serializes it as the `agent_memory` field in the 403 body.
 
 ## Architecture
 
