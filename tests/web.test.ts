@@ -22,7 +22,7 @@ const SESSION_RESPONSE = {
   session_id: 'sess_123',
   poll_secret: 'ps_secret',
   verify_url: 'https://agentscore.sh/verify/new',
-  agent_instructions: 'Ask the user to verify',
+  next_steps: { action: 'deliver_verify_url_and_poll', user_message: 'Ask the user to verify' },
 };
 
 function mockFetchOk(body: unknown): void {

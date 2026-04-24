@@ -198,7 +198,7 @@ describe('Fastify adapter — fail-open + session creation paths', () => {
       session_id: 'sess_fy1',
       poll_secret: 'ps_fy',
       verify_url: 'https://agentscore.sh/verify/fy',
-      agent_instructions: 'Verify to continue',
+      next_steps: { action: 'deliver_verify_url_and_poll', user_message: 'Verify to continue' },
     });
     const app = Fastify();
     await app.register(agentscoreGate, {

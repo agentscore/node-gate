@@ -26,11 +26,16 @@ const DENY_RESPONSE = {
   verify_url: 'https://agentscore.sh/verify/xyz',
 };
 
+// API emits structured next_steps on /v1/sessions success; gate stringifies
+// into agent_instructions for body-shape consistency with every other denial.
 const SESSION_RESPONSE = {
   session_id: 'sess_123',
   poll_secret: 'ps_secret',
   verify_url: 'https://agentscore.sh/verify/new',
-  agent_instructions: 'Ask the user to verify',
+  next_steps: {
+    action: 'deliver_verify_url_and_poll',
+    user_message: 'Ask the user to verify',
+  },
 };
 
 function mockFetchOk(body: unknown): void {
@@ -253,8 +258,11 @@ describe('Hono adapter — createSessionOnMissing', () => {
       session_id: 'sess_123',
       poll_secret: 'ps_secret',
       verify_url: 'https://agentscore.sh/verify/new',
-      agent_instructions: 'Ask the user to verify',
     });
+    // agent_instructions is the JSON-stringified next_steps from the API response.
+    const parsed = JSON.parse(body.agent_instructions as string);
+    expect(parsed.action).toBe('deliver_verify_url_and_poll');
+    expect(parsed.user_message).toBe('Ask the user to verify');
     const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(fetchCall[0]).toContain('/v1/sessions');
     const postBody = JSON.parse(fetchCall[1].body as string);

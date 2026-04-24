@@ -4,6 +4,12 @@ import { extractPaymentSignerAddress, readX402PaymentHeader } from '../src/signe
 const SIGNER_LOWER = '0xabcdef0123456789abcdef0123456789abcdef01';
 const SIGNER_MIXED = '0xABCDEF0123456789ABCDEF0123456789ABCDEF01';
 
+// Monotonic cache-bust for dynamic imports. Using `Date.now()` would collide when
+// two tests run within the same millisecond (likely on fast CPUs or under CI load),
+// which would share a cached module and break the vi.doMock state — flake.
+let _importCounter = 0;
+const freshImportKey = () => `${Date.now()}-${++_importCounter}`;
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -94,7 +100,7 @@ describe('extractPaymentSignerAddress — MPP path', () => {
       },
     }));
     const { extractPaymentSignerAddress: freshExtract } = await import(
-      `../src/signer?mpp=${Date.now()}`
+      `../src/signer?mpp=${freshImportKey()}`
     );
     const req = makeRequest({ authorization: 'Payment mpp-cred' });
     const result = await freshExtract(req);
@@ -110,7 +116,7 @@ describe('extractPaymentSignerAddress — MPP path', () => {
       },
     }));
     const { extractPaymentSignerAddress: freshExtract } = await import(
-      `../src/signer?mpp-nonevm=${Date.now()}`
+      `../src/signer?mpp-nonevm=${freshImportKey()}`
     );
     const req = makeRequest({ authorization: 'Payment mpp-cred' });
     expect(await freshExtract(req)).toBeNull();
@@ -126,7 +132,7 @@ describe('extractPaymentSignerAddress — MPP path', () => {
     }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { extractPaymentSignerAddress: freshExtract } = await import(
-      `../src/signer?mpp-throw=${Date.now()}`
+      `../src/signer?mpp-throw=${freshImportKey()}`
     );
     const req = makeRequest({ authorization: 'Payment mpp-cred' });
     expect(await freshExtract(req)).toBeNull();

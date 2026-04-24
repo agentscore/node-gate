@@ -436,6 +436,11 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
               }
             }
 
+            // The API emits `next_steps` (structured object) on /v1/sessions success.
+            // Stringify it into the gate's `agent_instructions` contract so merchants
+            // get the same JSON-encoded {action, steps, user_message} envelope as every
+            // other gate-emitted denial.
+            const apiNextSteps = data.next_steps as Record<string, unknown> | undefined;
             return {
               kind: 'deny',
               reason: {
@@ -444,7 +449,7 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
                 session_id: data.session_id as string | undefined,
                 poll_secret: data.poll_secret as string | undefined,
                 poll_url: data.poll_url as string | undefined,
-                agent_instructions: data.agent_instructions as string | undefined,
+                agent_instructions: apiNextSteps ? JSON.stringify(apiNextSteps) : undefined,
                 agent_memory: agentMemoryHint,
                 ...(extra && { extra }),
               },
@@ -456,14 +461,15 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
       }
 
       // Bare missing-identity denial (no session was auto-created). Describe the probe
-      // strategy so agents without memory can recover in one round trip: try wallet
-      // first on signing rails, fall back to stored opc_..., fall back to session flow.
+      // strategy so agents without memory can recover: try wallet first on signing rails,
+      // fall back to stored opc_..., fall back to session flow (noting that only
+      // auto-session merchants return verify_url + poll data on the retry).
       const missingIdentityInstructions = JSON.stringify({
         action: 'probe_identity_then_session',
         steps: [
-          'If you have a wallet in hand AND this merchant accepts a wallet-signing rail (Tempo MPP or x402 — see openapi.json x-payment-info): send X-Wallet-Address and retry. If the wallet is linked to an AgentScore operator anywhere (via prior SIWE claim or prior captureWallet), this passes in one round trip.',
-          'If step 1 is denied (wallet_signer_mismatch, unknown_address, or missing_kyc) OR you already have a stored operator_token: send X-Operator-Token: opc_... and retry.',
-          'If neither works: retry with NO identity header. The 403 will include verify_url + session_id + poll_secret. Share verify_url with the user, then poll poll_url every 5s with X-Poll-Secret until status=verified — the poll response returns a one-time operator_token.',
+          'If you have a wallet AND this merchant accepts a wallet-signing rail (Tempo MPP or x402 — see openapi.json x-payment-info): send X-Wallet-Address and retry. If the wallet is already linked to an AgentScore operator (via prior SIWE claim or prior captureWallet), this passes in one round trip. If the wallet is unlinked or the account has no KYC, the 403 will include a verify_url — share it with the user to claim the wallet + complete KYC, then retry.',
+          'If step 1 is denied or you already have a stored operator_token (valid + not expired): send X-Operator-Token: opc_... and retry.',
+          'If neither applies: retry with NO identity header. Merchants that auto-create verification sessions (most AgentScore merchants do) return verify_url + session_id + poll_secret in the 403 body — share verify_url with the user, then poll poll_url every 5s with the X-Poll-Secret header until status=verified (the poll returns a one-time operator_token). If the retry returns the same bare 403, this merchant does not support self-service session bootstrapping — direct the user to https://agentscore.sh/sign-up to create an AgentScore identity, then retry with a fresh X-Operator-Token from POST /v1/credentials.',
         ],
         user_message:
           'Try X-Wallet-Address first if you have a wallet and the merchant accepts Tempo/x402; fall back to a stored X-Operator-Token, then to the session/verify flow described in agent_memory.bootstrap.',

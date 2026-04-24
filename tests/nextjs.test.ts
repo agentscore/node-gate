@@ -185,7 +185,7 @@ describe('Next.js adapter — withAgentScoreGate (route handler wrapper)', () =>
       session_id: 'sess_nx1',
       poll_secret: 'ps_nx',
       verify_url: 'https://agentscore.sh/verify/nx',
-      agent_instructions: 'Verify to continue',
+      next_steps: { action: 'deliver_verify_url_and_poll', user_message: 'Verify to continue' },
     };
     mockFetchOk(SESSION_RESPONSE);
     const POST = withAgentScoreGate(
