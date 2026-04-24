@@ -50,7 +50,6 @@ describe('denialReasonToBody', () => {
         pattern_summary: 'test',
         quickstart: 'https://docs/agent-identity',
         identity_check_endpoint: 'https://api.agentscore.sh/v1/credentials',
-        list_wallets_endpoint: 'https://api.agentscore.sh/v1/credentials/wallets',
         identity_paths: { wallet: 'X-Wallet-Address', operator_token: 'X-Operator-Token' },
         bootstrap: 'Follow verify_url',
         do_not_persist_in_memory: ['operator_token'],

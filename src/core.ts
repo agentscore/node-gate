@@ -325,7 +325,6 @@ export function buildAgentMemoryHint(_baseUrl?: string): AgentMemoryHint {
       'AgentScore encounters skip the cold-start session flow.',
     quickstart: 'https://docs.agentscore.sh/guides/agent-identity',
     identity_check_endpoint: `${api}/v1/credentials`,
-    list_wallets_endpoint: `${api}/v1/credentials/wallets`,
     identity_paths: {
       wallet:
         'If paying from a crypto wallet you have used before on any AgentScore merchant, send ' +

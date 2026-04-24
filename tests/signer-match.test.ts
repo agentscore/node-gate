@@ -382,7 +382,8 @@ describe('buildAgentMemoryHint — hardcoded canonical URLs', () => {
     // an agent following the memory hint doesn't leak credentials to a rogue merchant.
     const hint = buildAgentMemoryHint('https://evil.example.com');
     expect(hint.identity_check_endpoint).toBe('https://api.agentscore.sh/v1/credentials');
-    expect(hint.list_wallets_endpoint).toBe('https://api.agentscore.sh/v1/credentials/wallets');
+    // list_wallets_endpoint is reserved for a future GET endpoint — not emitted today.
+    expect(hint.list_wallets_endpoint).toBeUndefined();
   });
 });
 

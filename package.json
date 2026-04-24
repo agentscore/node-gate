@@ -76,7 +76,7 @@
     "type": "git",
     "url": "https://github.com/agentscore/node-gate"
   },
-  "homepage": "https://docs.agentscore.sh",
+  "homepage": "https://agentscore.sh",
   "bugs": {
     "url": "https://github.com/agentscore/node-gate/issues"
   },
