@@ -200,7 +200,7 @@ Every 403 body carries `agent_instructions` — a JSON-encoded `{action, steps, 
 | `missing_identity` | `probe_identity_then_session` (try wallet on signing rails → stored opc_... → session flow) |
 | `wallet_signer_mismatch` | `resign_or_switch_to_operator_token` (body also carries `claimed_operator`, `actual_signer_operator`, `expected_signer`, `actual_signer`, `linked_wallets`) |
 | `wallet_auth_requires_wallet_signing` | `switch_to_operator_token` |
-| `token_expired` | `mint_new_credential` |
+| `token_expired` | `deliver_verify_url_and_poll` (API auto-mints a session in the 401 body; unified code for both TTL-expired and revoked) |
 
 ## Auto-Create Session
 

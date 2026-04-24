@@ -44,7 +44,7 @@ describe('denialReasonToBody', () => {
   it('propagates agent_instructions and agent_memory when present', () => {
     const body = denialReasonToBody(reason({
       code: 'token_expired',
-      agent_instructions: '{"action":"mint_new_credential"}',
+      agent_instructions: '{"action":"deliver_verify_url_and_poll"}',
       agent_memory: {
         save_for_future_agentscore_gates: true,
         pattern_summary: 'test',
@@ -56,7 +56,7 @@ describe('denialReasonToBody', () => {
         persist_in_credential_store: ['operator_token'],
       },
     }));
-    expect(body.agent_instructions).toBe('{"action":"mint_new_credential"}');
+    expect(body.agent_instructions).toBe('{"action":"deliver_verify_url_and_poll"}');
     expect(body.agent_memory).toBeDefined();
   });
 
