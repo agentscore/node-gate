@@ -100,8 +100,7 @@ export type DenialCode =
   | 'wallet_signer_mismatch'
   | 'wallet_auth_requires_wallet_signing'
   // Granular credential-state denials passed through from /v1/assess.
-  | 'token_expired'
-  | 'token_revoked';
+  | 'token_expired';
 
 /**
  * Cross-merchant pattern hint emitted on bootstrap denials and session-create responses.
@@ -548,20 +547,35 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
         return { kind: 'deny', reason: { code: 'payment_required' } };
       }
 
-      // Pass through granular denial codes the API emits (token_expired, token_revoked).
-      // Without this the gate would squash them to wallet_not_trusted and agents lose the
-      // actionable sub-code.
+      // Pass through the API's token_expired 401 (covers both expired and revoked
+      // credentials — the API deliberately doesn't distinguish). The 401 body carries
+      // an auto-minted session (verify_url + session_id + poll_secret + next_steps +
+      // agent_memory) so agents can recover without holding an API key. Forward all of
+      // that into the DenialReason so the gate's 403 body includes the session fields.
       if (response.status === 401) {
         try {
-          const errData = (await response.clone().json()) as { error?: { code?: string }; next_steps?: unknown };
+          const errData = (await response.clone().json()) as {
+            error?: { code?: string };
+            session_id?: unknown;
+            poll_secret?: unknown;
+            verify_url?: unknown;
+            poll_url?: unknown;
+            next_steps?: unknown;
+            agent_memory?: unknown;
+          };
           const code = errData?.error?.code;
-          if (code === 'token_expired' || code === 'token_revoked') {
+          if (code === 'token_expired') {
             return {
               kind: 'deny',
               reason: {
                 code,
                 data: errData as unknown as AgentScoreData,
+                ...(typeof errData.verify_url === 'string' ? { verify_url: errData.verify_url } : {}),
+                ...(typeof errData.session_id === 'string' ? { session_id: errData.session_id } : {}),
+                ...(typeof errData.poll_secret === 'string' ? { poll_secret: errData.poll_secret } : {}),
+                ...(typeof errData.poll_url === 'string' ? { poll_url: errData.poll_url } : {}),
                 ...(errData.next_steps ? { agent_instructions: JSON.stringify(errData.next_steps) } : {}),
+                ...(errData.agent_memory ? { agent_memory: errData.agent_memory as AgentMemoryHint } : {}),
               },
             };
           }

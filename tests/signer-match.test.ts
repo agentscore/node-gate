@@ -277,7 +277,7 @@ describe('AgentScoreCore.verifyWalletSignerMatch — coverage paths', () => {
   });
 
   it('401 with unknown error.code falls through to generic error', async () => {
-    // error.code is present but not token_expired/token_revoked → passthrough block
+    // error.code is present but not token_expired → passthrough block
     // doesn't match, outer !response.ok throws, verify returns api_error.
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,

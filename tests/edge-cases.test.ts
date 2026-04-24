@@ -647,14 +647,21 @@ describe('evaluate() — 401 passthrough edge cases', () => {
     vi.restoreAllMocks();
   });
 
-  it('passes through token_expired with agent_instructions when API returns 401 + next_steps', async () => {
+  it('passes through token_expired with auto-session fields from the API 401 body', async () => {
+    // Revoked and expired credentials both surface as token_expired from the API with
+    // an auto-minted session in the 401 body. Gate forwards all session fields so the
+    // 403 downstream carries verify_url + session_id + poll_secret for agent recovery.
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
       clone: () => ({
         json: async () => ({
-          error: { code: 'token_expired', message: 'expired' },
-          next_steps: { action: 'mint_new_credential' },
+          error: { code: 'token_expired', message: 'invalid' },
+          session_id: 'sess_auto',
+          poll_secret: 'poll_auto',
+          verify_url: 'https://agentscore.sh/verify?session=sess_auto',
+          poll_url: 'https://api.agentscore.sh/v1/sessions/sess_auto',
+          next_steps: { action: 'deliver_verify_url_and_poll' },
         }),
       }),
     } as unknown as Response);
@@ -668,16 +675,19 @@ describe('evaluate() — 401 passthrough edge cases', () => {
     expect(status).toHaveBeenCalledWith(403);
     expect(json).toHaveBeenCalledWith(expect.objectContaining({
       error: 'token_expired',
-      agent_instructions: expect.stringContaining('mint_new_credential'),
+      session_id: 'sess_auto',
+      poll_secret: 'poll_auto',
+      verify_url: 'https://agentscore.sh/verify?session=sess_auto',
+      agent_instructions: expect.stringContaining('deliver_verify_url_and_poll'),
     }));
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('passes through token_revoked without agent_instructions when next_steps absent', async () => {
+  it('passes through token_expired without agent_instructions when next_steps absent', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
-      clone: () => ({ json: async () => ({ error: { code: 'token_revoked' } }) }),
+      clone: () => ({ json: async () => ({ error: { code: 'token_expired' } }) }),
     } as unknown as Response);
 
     const mw = agentscoreGate({ apiKey: API_KEY });
@@ -687,7 +697,7 @@ describe('evaluate() — 401 passthrough edge cases', () => {
 
     expect(status).toHaveBeenCalledWith(403);
     const body = json.mock.calls[0]![0] as Record<string, unknown>;
-    expect(body.error).toBe('token_revoked');
+    expect(body.error).toBe('token_expired');
     expect(body).not.toHaveProperty('agent_instructions');
   });
 

@@ -201,7 +201,6 @@ Every 403 body carries `agent_instructions` — a JSON-encoded `{action, steps, 
 | `wallet_signer_mismatch` | `resign_or_switch_to_operator_token` (body also carries `claimed_operator`, `actual_signer_operator`, `expected_signer`, `actual_signer`, `linked_wallets`) |
 | `wallet_auth_requires_wallet_signing` | `switch_to_operator_token` |
 | `token_expired` | `mint_new_credential` |
-| `token_revoked` | `contact_support` |
 
 ## Auto-Create Session
 
