@@ -293,7 +293,7 @@ const WALLET_SIGNER_MISMATCH_INSTRUCTIONS = JSON.stringify({
   action: 'resign_or_switch_to_operator_token',
   steps: [
     'Preferred: re-submit the payment signed by expected_signer (or any entry in linked_wallets — same-operator wallets are fungible) and retry with the same X-Wallet-Address.',
-    'Alternative: drop X-Wallet-Address and retry with X-Operator-Token. Use a stored opc_... if you have one; otherwise call POST /v1/credentials or run the session/verify flow to mint one.',
+    'Alternative: drop X-Wallet-Address and retry with X-Operator-Token. Use a stored opc_... if you have one; otherwise retry this request with NO identity header — the merchant will mint a verification session in the 403 body (verify_url + poll_secret). Share verify_url with the user, poll, receive a fresh opc_...',
   ],
   user_message:
     'The payment signer resolves to a different operator than X-Wallet-Address. Re-sign from expected_signer or any linked_wallets entry, or switch to X-Operator-Token.',
@@ -482,7 +482,7 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
         steps: [
           'If you have a wallet AND this merchant accepts a wallet-signing rail (Tempo MPP or x402 — see openapi.json x-payment-info): send X-Wallet-Address and retry. If the wallet is already linked to an AgentScore operator (via prior SIWE claim or prior captureWallet), this passes in one round trip. If the wallet is unlinked or the account has no KYC, the 403 will include a verify_url — share it with the user to claim the wallet + complete KYC, then retry.',
           'If step 1 is denied or you already have a stored operator_token (valid + not expired): send X-Operator-Token: opc_... and retry.',
-          'If neither applies: retry with NO identity header. Merchants that auto-create verification sessions (most AgentScore merchants do) return verify_url + session_id + poll_secret in the 403 body — share verify_url with the user, then poll poll_url every 5s with the X-Poll-Secret header until status=verified (the poll returns a one-time operator_token). If the retry returns the same bare 403, this merchant does not support self-service session bootstrapping — direct the user to https://agentscore.sh/sign-up to create an AgentScore identity, then retry with a fresh X-Operator-Token from POST /v1/credentials.',
+          'If neither applies: retry with NO identity header. Merchants that auto-create verification sessions (most AgentScore merchants do) return verify_url + session_id + poll_secret in the 403 body — share verify_url with the user, then poll poll_url every 5s with the X-Poll-Secret header until status=verified (the poll returns a one-time operator_token). If the retry returns the same bare 403, this merchant does not support self-service session bootstrapping — direct the user to https://agentscore.sh/sign-up to create an AgentScore identity and mint an operator_token from their dashboard (https://agentscore.sh/dashboard/verify). The user hands the opc_... to you, and you retry with X-Operator-Token.',
         ],
         user_message:
           'Try X-Wallet-Address first if you have a wallet and the merchant accepts Tempo/x402; fall back to a stored X-Operator-Token, then to the session/verify flow described in agent_memory.bootstrap.',
