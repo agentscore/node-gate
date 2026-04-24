@@ -236,6 +236,24 @@ describe('invalid wallet header edge cases', () => {
     expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_identity' }));
   });
 
+  it('missing_identity body carries next_steps.action: send_existing_identity', async () => {
+    // TEC-218 phase 1: bare bootstrap denial hints agents to try stored identity first
+    // (returning-customer fast path) before running the cold-start session flow.
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq();
+    const { res, json } = makeRes();
+    await mw(req, res, makeNext());
+
+    const body = json.mock.calls[0]![0] as Record<string, unknown>;
+    expect(body.error).toBe('missing_identity');
+    expect(body.agent_instructions).toBeDefined();
+    const instructions = JSON.parse(body.agent_instructions as string) as Record<string, unknown>;
+    expect(instructions.action).toBe('send_existing_identity');
+    expect(instructions.user_message).toMatch(/stored operator_token|wallet/i);
+    // agent_memory still present for cross-merchant pattern hint
+    expect(body.agent_memory).toBeDefined();
+  });
+
 });
 
 // ---------------------------------------------------------------------------

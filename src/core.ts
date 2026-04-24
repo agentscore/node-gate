@@ -425,7 +425,22 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
         }
       }
 
-      return { kind: 'deny', reason: { code: 'missing_identity', agent_memory: agentMemoryHint } };
+      // Bare missing-identity denial (no session was auto-created). Hint the agent to
+      // try a stored operator_token or linked wallet before running the cold-start
+      // session flow — the fast path for returning customers.
+      const missingIdentityInstructions = JSON.stringify({
+        action: 'send_existing_identity',
+        user_message:
+          'If you have a stored operator_token or a wallet previously linked on any AgentScore merchant, send it (X-Operator-Token or X-Wallet-Address) and retry. Otherwise, follow the session/verify flow described in agent_memory.bootstrap.',
+      });
+      return {
+        kind: 'deny',
+        reason: {
+          code: 'missing_identity',
+          agent_instructions: missingIdentityInstructions,
+          agent_memory: agentMemoryHint,
+        },
+      };
     }
 
     const cacheKey = identity.operatorToken?.toLowerCase() ?? identity.address?.toLowerCase() ?? '';
