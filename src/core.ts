@@ -568,21 +568,27 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
    */
   async function resolveWalletToOperator(
     walletAddress: string,
-  ): Promise<{ ok: true; operator: string | null } | { ok: false }> {
+  ): Promise<{ ok: true; operator: string | null; linkedWallets: string[] } | { ok: false }> {
     const wallet = walletAddress.toLowerCase();
 
     // Cache lookup — first the plain cache (populated by evaluate() for identity-headered wallets).
     // Saves a second /v1/assess call when the gate already looked up this wallet.
+    const extractFromCached = (raw: Record<string, unknown>): { operator: string | null; linkedWallets: string[] } => {
+      const op = raw.resolved_operator;
+      const links = raw.linked_wallets;
+      return {
+        operator: typeof op === 'string' ? op : null,
+        linkedWallets: Array.isArray(links) ? (links as unknown[]).filter((w): w is string => typeof w === 'string') : [],
+      };
+    };
+
     const plainCached = cache.get(wallet);
     if (plainCached?.raw) {
-      const op = (plainCached.raw as Record<string, unknown>).resolved_operator;
-      if (op === null || typeof op === 'string') return { ok: true, operator: op };
+      return { ok: true, ...extractFromCached(plainCached.raw as Record<string, unknown>) };
     }
-    // Fall back to the resolve-specific cache (populated by previous calls to this function).
     const resolveCached = cache.get(`resolve:${wallet}`);
     if (resolveCached?.raw) {
-      const op = (resolveCached.raw as Record<string, unknown>).resolved_operator;
-      if (op === null || typeof op === 'string') return { ok: true, operator: op };
+      return { ok: true, ...extractFromCached(resolveCached.raw as Record<string, unknown>) };
     }
 
     try {
@@ -600,8 +606,7 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
       if (!response.ok) return { ok: false };
       const data = (await response.json()) as Record<string, unknown>;
       cache.set(`resolve:${wallet}`, { allow: true, raw: data });
-      const op = data.resolved_operator;
-      return { ok: true, operator: typeof op === 'string' ? op : null };
+      return { ok: true, ...extractFromCached(data) };
     } catch {
       return { ok: false };
     }
@@ -648,10 +653,9 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
       actualSignerOperator: signerOperator,
       expectedSigner: claimedLower,
       actualSigner: signerLower,
-      // linked_wallets: population deferred to a future API endpoint
-      // (`GET /v1/credentials/:id/wallets`) — for now the agent gets the mismatch signal
-      // without an enumerated valid set.
-      linkedWallets: [],
+      // Populated from /v1/assess.linked_wallets on the claimed wallet — the full set of
+      // wallets the agent CAN sign with to satisfy the claim (same-operator rule).
+      linkedWallets: claimedResolve.linkedWallets,
     };
   }
 
