@@ -1,6 +1,6 @@
 {
   "name": "@agent-score/gate",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Trust-gating middleware for Node.js web frameworks (Express, Hono, Next.js, Fastify, Web Fetch) using AgentScore",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

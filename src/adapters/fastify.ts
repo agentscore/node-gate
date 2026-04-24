@@ -1,5 +1,13 @@
 import { createAgentScoreCore } from '../core';
-import type { AgentIdentity, AgentScoreCore, AgentScoreCoreOptions, CreateSessionOnMissing, DenialReason } from '../core';
+import { extractPaymentSignerAddress, readX402PaymentHeader } from '../signer';
+import type {
+  AgentIdentity,
+  AgentScoreCore,
+  AgentScoreCoreOptions,
+  CreateSessionOnMissing,
+  DenialReason,
+  VerifyWalletSignerResult,
+} from '../core';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 
 const GATE_STATE_KEY = '__agentscoreGate';
@@ -7,6 +15,7 @@ const GATE_STATE_KEY = '__agentscoreGate';
 interface GateState {
   core: AgentScoreCore;
   operatorToken?: string;
+  walletAddress?: string;
 }
 
 export interface AgentScoreGateOptions extends Omit<AgentScoreCoreOptions, 'createSessionOnMissing'> {
@@ -37,6 +46,12 @@ function defaultOnDenied(_req: FastifyRequest, reply: FastifyReply, reason: Deni
   if (reason.poll_secret) body.poll_secret = reason.poll_secret;
   if (reason.poll_url) body.poll_url = reason.poll_url;
   if (reason.agent_instructions) body.agent_instructions = reason.agent_instructions;
+  if (reason.agent_memory) body.agent_memory = reason.agent_memory;
+  if (reason.claimed_operator) body.claimed_operator = reason.claimed_operator;
+  if (reason.actual_signer_operator !== undefined) body.actual_signer_operator = reason.actual_signer_operator;
+  if (reason.expected_signer) body.expected_signer = reason.expected_signer;
+  if (reason.actual_signer) body.actual_signer = reason.actual_signer;
+  if (reason.linked_wallets && reason.linked_wallets.length > 0) body.linked_wallets = reason.linked_wallets;
   if (reason.extra) Object.assign(body, reason.extra);
   reply.code(403).send(body);
 }
@@ -71,6 +86,7 @@ const agentscoreGatePlugin: FastifyPluginAsync<AgentScoreGateOptions> = async (f
     (request as unknown as Record<string, unknown>)[GATE_STATE_KEY] = {
       core,
       operatorToken: identity?.operatorToken,
+      walletAddress: identity?.address,
     } satisfies GateState;
 
     const outcome = await core.evaluate(identity, request);
@@ -102,6 +118,28 @@ export async function captureWallet(
     idempotencyKey: options.idempotencyKey,
   });
 }
+
+/**
+ * Verify the payment signer resolves to the same operator as the claimed X-Wallet-Address (TEC-226).
+ * Pass `options.signer` explicitly (extracted from the payment credential); no auto-extraction
+ * because Fastify's request isn't a Fetch Request.
+ */
+export async function verifyWalletSignerMatch(
+  request: FastifyRequest,
+  options: { signer: string | null; network?: 'evm' | 'solana' },
+): Promise<VerifyWalletSignerResult> {
+  const state = (request as unknown as Record<string, GateState | undefined>)[GATE_STATE_KEY];
+  if (!state?.walletAddress) {
+    return { kind: 'pass', claimedOperator: null, signerOperator: null };
+  }
+  return state.core.verifyWalletSignerMatch({
+    claimedWallet: state.walletAddress,
+    signer: options.signer,
+    network: options.network,
+  });
+}
+
+export { extractPaymentSignerAddress, readX402PaymentHeader };
 
 // Escape Fastify's plugin encapsulation so the preHandler hook applies to routes
 // registered at the parent scope (the common case: `app.register(agentscoreGate, ...)`

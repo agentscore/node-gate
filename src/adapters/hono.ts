@@ -1,5 +1,14 @@
 import { createAgentScoreCore } from '../core';
-import type { AgentIdentity, AgentScoreCore, AgentScoreCoreOptions, AgentScoreData, CreateSessionOnMissing, DenialReason } from '../core';
+import { extractPaymentSignerAddress, readX402PaymentHeader } from '../signer';
+import type {
+  AgentIdentity,
+  AgentScoreCore,
+  AgentScoreCoreOptions,
+  AgentScoreData,
+  CreateSessionOnMissing,
+  DenialReason,
+  VerifyWalletSignerResult,
+} from '../core';
 import type { Context, MiddlewareHandler } from 'hono';
 
 const CONTEXT_KEY = 'agentscore';
@@ -8,6 +17,7 @@ const GATE_STATE_KEY = '__agentscoreGate';
 interface GateState {
   core: AgentScoreCore;
   operatorToken?: string;
+  walletAddress?: string;
 }
 
 export interface AgentScoreGateOptions extends Omit<AgentScoreCoreOptions, 'createSessionOnMissing'> {
@@ -40,6 +50,13 @@ function defaultOnDenied(c: Context, reason: DenialReason): Response {
   if (reason.poll_secret) body.poll_secret = reason.poll_secret;
   if (reason.poll_url) body.poll_url = reason.poll_url;
   if (reason.agent_instructions) body.agent_instructions = reason.agent_instructions;
+  if (reason.agent_memory) body.agent_memory = reason.agent_memory;
+  // TEC-226 wallet-signer-match fields
+  if (reason.claimed_operator) body.claimed_operator = reason.claimed_operator;
+  if (reason.actual_signer_operator !== undefined) body.actual_signer_operator = reason.actual_signer_operator;
+  if (reason.expected_signer) body.expected_signer = reason.expected_signer;
+  if (reason.actual_signer) body.actual_signer = reason.actual_signer;
+  if (reason.linked_wallets && reason.linked_wallets.length > 0) body.linked_wallets = reason.linked_wallets;
   // Merchant-supplied fields from createSessionOnMissing.onBeforeSession.
   if (reason.extra) Object.assign(body, reason.extra);
   return c.json(body, 403);
@@ -62,7 +79,11 @@ export function agentscoreGate(options: AgentScoreGateOptions): MiddlewareHandle
 
   return async (c, next) => {
     const identity = extractIdentity(c);
-    c.set(GATE_STATE_KEY, { core, operatorToken: identity?.operatorToken } satisfies GateState);
+    c.set(GATE_STATE_KEY, {
+      core,
+      operatorToken: identity?.operatorToken,
+      walletAddress: identity?.address,
+    } satisfies GateState);
 
     const outcome = await core.evaluate(identity, c);
 
@@ -111,5 +132,51 @@ export async function captureWallet(
     walletAddress: options.walletAddress,
     network: options.network,
     idempotencyKey: options.idempotencyKey,
+  });
+}
+
+/**
+ * Verify the payment signer resolves to the same operator as the claimed `X-Wallet-Address` (TEC-226).
+ *
+ * Call this AFTER the agent submits a payment credential, BEFORE settling. Returns:
+ *
+ *   - `pass` — signer matches (byte-equal or same-operator)
+ *   - `wallet_signer_mismatch` — signer resolves to a different operator (or is unlinked)
+ *   - `wallet_auth_requires_wallet_signing` — payment rail has no wallet signer (SPT/card);
+ *     agent should switch to `X-Operator-Token`
+ *
+ * No-ops (returns `pass` with `claimedOperator: null`) when the request was operator-token
+ * authenticated — signer-match only applies to wallet-auth.
+ *
+ * The helper auto-extracts the signer from MPP (`Authorization: Payment`) or x402
+ * (`payment-signature` / `x-payment`) headers. Pass `options.signer` explicitly to override.
+ *
+ * ```ts
+ * app.post('/purchase', async (c) => {
+ *   const result = await verifyWalletSignerMatch(c);
+ *   if (result.kind !== 'pass') return c.json({ error: result.kind, ...result }, 403);
+ *   // ... proceed with settlement ...
+ * });
+ * ```
+ */
+export async function verifyWalletSignerMatch(
+  c: Context,
+  options?: { signer?: string | null; network?: 'evm' | 'solana' },
+): Promise<VerifyWalletSignerResult> {
+  const state = c.get(GATE_STATE_KEY) as GateState | undefined;
+  if (!state?.walletAddress) {
+    // Not a wallet-auth request — no check applies.
+    return { kind: 'pass', claimedOperator: null, signerOperator: null };
+  }
+
+  const signer =
+    options?.signer !== undefined
+      ? options.signer
+      : await extractPaymentSignerAddress(c.req.raw, readX402PaymentHeader(c.req.raw));
+
+  return state.core.verifyWalletSignerMatch({
+    claimedWallet: state.walletAddress,
+    signer,
+    network: options?.network,
   });
 }

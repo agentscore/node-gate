@@ -63,7 +63,7 @@ describe('Fastify adapter — identity extraction', () => {
     const res = await app.inject({ method: 'GET', url: '/test' });
 
     expect(res.statusCode).toBe(403);
-    expect(res.json()).toEqual({ error: 'missing_identity' });
+    expect(res.json()).toMatchObject({ error: 'missing_identity' });
   });
 
   it('uses custom extractIdentity when provided', async () => {

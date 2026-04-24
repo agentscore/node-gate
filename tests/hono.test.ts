@@ -97,7 +97,7 @@ describe('Hono adapter — identity extraction', () => {
     const res = await app.request('/test');
 
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: 'missing_identity' });
+    expect(await res.json()).toMatchObject({ error: 'missing_identity' });
   });
 
   it('uses custom extractIdentity when provided', async () => {

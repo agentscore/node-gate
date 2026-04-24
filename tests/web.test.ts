@@ -84,7 +84,7 @@ describe('Web Fetch adapter — createAgentScoreGate', () => {
     expect(result.allowed).toBe(false);
     if (!result.allowed) {
       expect(result.response.status).toBe(403);
-      expect(await result.response.json()).toEqual({ error: 'missing_identity' });
+      expect(await result.response.json()).toMatchObject({ error: 'missing_identity' });
     }
   });
 
@@ -99,7 +99,7 @@ describe('Web Fetch adapter — createAgentScoreGate', () => {
 
     expect(result.allowed).toBe(false);
     if (!result.allowed) {
-      expect(await result.response.json()).toEqual({ error: 'missing_identity' });
+      expect(await result.response.json()).toMatchObject({ error: 'missing_identity' });
     }
     expect(global.fetch).not.toHaveBeenCalled();
   });

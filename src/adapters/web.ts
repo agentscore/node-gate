@@ -1,5 +1,13 @@
 import { createAgentScoreCore } from '../core';
-import type { AgentIdentity, AgentScoreCoreOptions, AgentScoreData, CreateSessionOnMissing, DenialReason } from '../core';
+import { extractPaymentSignerAddress, readX402PaymentHeader } from '../signer';
+import type {
+  AgentIdentity,
+  AgentScoreCoreOptions,
+  AgentScoreData,
+  CreateSessionOnMissing,
+  DenialReason,
+  VerifyWalletSignerResult,
+} from '../core';
 
 export interface AgentScoreGateOptions extends Omit<AgentScoreCoreOptions, 'createSessionOnMissing'> {
   /** Custom function to extract agent identity from a Request. */
@@ -28,6 +36,13 @@ export type GuardResult =
         network: 'evm' | 'solana';
         idempotencyKey?: string;
       }) => Promise<void>;
+      /** Verify the payment signer matches the claimed X-Wallet-Address (TEC-226). Bound
+       *  only when the request was wallet-authenticated. Pass `opts.signer` explicitly or
+       *  omit to auto-extract from the original `Request`. */
+      verifyWalletSignerMatch?: (opts?: {
+        signer?: string | null;
+        network?: 'evm' | 'solana';
+      }) => Promise<VerifyWalletSignerResult>;
     }
   | { allowed: false; response: Response };
 
@@ -50,6 +65,12 @@ function defaultOnDenied(_req: Request, reason: DenialReason): Response {
   if (reason.poll_secret) body.poll_secret = reason.poll_secret;
   if (reason.poll_url) body.poll_url = reason.poll_url;
   if (reason.agent_instructions) body.agent_instructions = reason.agent_instructions;
+  if (reason.agent_memory) body.agent_memory = reason.agent_memory;
+  if (reason.claimed_operator) body.claimed_operator = reason.claimed_operator;
+  if (reason.actual_signer_operator !== undefined) body.actual_signer_operator = reason.actual_signer_operator;
+  if (reason.expected_signer) body.expected_signer = reason.expected_signer;
+  if (reason.actual_signer) body.actual_signer = reason.actual_signer;
+  if (reason.linked_wallets && reason.linked_wallets.length > 0) body.linked_wallets = reason.linked_wallets;
   if (reason.extra) Object.assign(body, reason.extra);
   return new Response(JSON.stringify(body), {
     status: 403,
@@ -86,7 +107,25 @@ export function createAgentScoreGate(options: AgentScoreGateOptions): (req: Requ
         ? (opts: { walletAddress: string; network: 'evm' | 'solana'; idempotencyKey?: string }) =>
             core.captureWallet({ operatorToken: identity.operatorToken!, ...opts })
         : undefined;
-      return { allowed: true, data: outcome.data, captureWallet };
+      const verifyWalletSignerMatchBound = identity?.address
+        ? async (opts?: { signer?: string | null; network?: 'evm' | 'solana' }) => {
+            const signer =
+              opts?.signer !== undefined
+                ? opts.signer
+                : await extractPaymentSignerAddress(req, readX402PaymentHeader(req));
+            return core.verifyWalletSignerMatch({
+              claimedWallet: identity.address!,
+              signer,
+              network: opts?.network,
+            });
+          }
+        : undefined;
+      return {
+        allowed: true,
+        data: outcome.data,
+        captureWallet,
+        verifyWalletSignerMatch: verifyWalletSignerMatchBound,
+      };
     }
 
     const response = await onDenied(req, outcome.reason);
@@ -116,6 +155,10 @@ export function withAgentScoreGate<TCtx = unknown>(
         network: 'evm' | 'solana';
         idempotencyKey?: string;
       }) => Promise<void>;
+      verifyWalletSignerMatch?: (opts?: {
+        signer?: string | null;
+        network?: 'evm' | 'solana';
+      }) => Promise<VerifyWalletSignerResult>;
     },
     ctx?: TCtx,
   ) => Response | Promise<Response>,
@@ -124,6 +167,16 @@ export function withAgentScoreGate<TCtx = unknown>(
   return async (req, ctx) => {
     const result = await guard(req);
     if (!result.allowed) return result.response;
-    return handler(req, { data: result.data, captureWallet: result.captureWallet }, ctx);
+    return handler(
+      req,
+      {
+        data: result.data,
+        captureWallet: result.captureWallet,
+        verifyWalletSignerMatch: result.verifyWalletSignerMatch,
+      },
+      ctx,
+    );
   };
 }
+
+export { extractPaymentSignerAddress, readX402PaymentHeader };

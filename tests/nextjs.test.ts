@@ -356,7 +356,7 @@ describe('Next.js adapter — agentscoreMiddleware', () => {
 
     expect(result?.status).toBe(403);
     const body = await result?.json();
-    expect(body).toEqual({ error: 'missing_identity' });
+    expect(body).toMatchObject({ error: 'missing_identity' });
   });
 });
 
