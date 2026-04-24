@@ -416,6 +416,20 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
           if (sessionRes.ok) {
             const data = (await sessionRes.json()) as Record<string, unknown>;
 
+            // Validate required fields before trusting the response. A misbehaving
+            // (or mocked-wrong) API could 200 without session_id/poll_secret/verify_url,
+            // which would propagate `undefined` into the 403 body and leave the agent
+            // stuck — treat that as a session-create failure and fall back to the bare
+            // missing_identity denial with the probe strategy copy.
+            if (
+              typeof data.session_id !== 'string' ||
+              typeof data.poll_secret !== 'string' ||
+              typeof data.verify_url !== 'string'
+            ) {
+              console.warn('[gate] /v1/sessions returned 200 without required fields — falling back to bare missing_identity');
+              // fall through to the bare denial below
+            } else {
+
             // Run onBeforeSession side-effect hook. Errors are swallowed — a failing DB
             // write (e.g. can't insert pending order) should not block the 403.
             let extra: Record<string, unknown> | undefined;
@@ -444,15 +458,16 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
               kind: 'deny',
               reason: {
                 code: 'identity_verification_required',
-                verify_url: data.verify_url as string | undefined,
-                session_id: data.session_id as string | undefined,
-                poll_secret: data.poll_secret as string | undefined,
+                verify_url: data.verify_url as string,
+                session_id: data.session_id as string,
+                poll_secret: data.poll_secret as string,
                 poll_url: data.poll_url as string | undefined,
                 agent_instructions: apiNextSteps ? JSON.stringify(apiNextSteps) : undefined,
                 agent_memory: agentMemoryHint,
                 ...(extra && { extra }),
               },
             };
+            }
           }
         } catch {
           // Fall through to default missing_identity denial
