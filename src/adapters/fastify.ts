@@ -1,4 +1,5 @@
 import { createAgentScoreCore } from '../core';
+import { denialReasonToBody } from '../_response';
 import { extractPaymentSignerAddress, readX402PaymentHeader } from '../signer';
 import type {
   AgentIdentity,
@@ -38,22 +39,7 @@ function defaultExtractIdentity(req: FastifyRequest): AgentIdentity | undefined 
 }
 
 function defaultOnDenied(_req: FastifyRequest, reply: FastifyReply, reason: DenialReason): void {
-  const body: Record<string, unknown> = { error: reason.code };
-  if (reason.decision) body.decision = reason.decision;
-  if (reason.reasons) body.reasons = reason.reasons;
-  if (reason.verify_url) body.verify_url = reason.verify_url;
-  if (reason.session_id) body.session_id = reason.session_id;
-  if (reason.poll_secret) body.poll_secret = reason.poll_secret;
-  if (reason.poll_url) body.poll_url = reason.poll_url;
-  if (reason.agent_instructions) body.agent_instructions = reason.agent_instructions;
-  if (reason.agent_memory) body.agent_memory = reason.agent_memory;
-  if (reason.claimed_operator) body.claimed_operator = reason.claimed_operator;
-  if (reason.actual_signer_operator !== undefined) body.actual_signer_operator = reason.actual_signer_operator;
-  if (reason.expected_signer) body.expected_signer = reason.expected_signer;
-  if (reason.actual_signer) body.actual_signer = reason.actual_signer;
-  if (reason.linked_wallets && reason.linked_wallets.length > 0) body.linked_wallets = reason.linked_wallets;
-  if (reason.extra) Object.assign(body, reason.extra);
-  reply.code(403).send(body);
+  reply.code(403).send(denialReasonToBody(reason));
 }
 
 /**

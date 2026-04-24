@@ -85,4 +85,52 @@ describe('extractPaymentSignerAddress — MPP path', () => {
     const req = makeRequest({ authorization: 'Payment mpp-cred' });
     expect(await extractPaymentSignerAddress(req, header)).toBe(SIGNER_LOWER);
   });
+
+  it('extracts the lowercased 0x address from an MPP DID (did:pkh:eip155:...)', async () => {
+    vi.doMock('mppx', () => ({
+      Credential: {
+        extractPaymentScheme: () => true,
+        fromRequest: () => ({ source: `did:pkh:eip155:8453:${SIGNER_MIXED}` }),
+      },
+    }));
+    const { extractPaymentSignerAddress: freshExtract } = await import(
+      `../src/signer?mpp=${Date.now()}`
+    );
+    const req = makeRequest({ authorization: 'Payment mpp-cred' });
+    const result = await freshExtract(req);
+    expect(result).toBe(SIGNER_LOWER);
+    vi.doUnmock('mppx');
+  });
+
+  it('returns null when the MPP credential source is not a did:pkh:eip155 shape', async () => {
+    vi.doMock('mppx', () => ({
+      Credential: {
+        extractPaymentScheme: () => true,
+        fromRequest: () => ({ source: 'did:web:example.com' }),
+      },
+    }));
+    const { extractPaymentSignerAddress: freshExtract } = await import(
+      `../src/signer?mpp-nonevm=${Date.now()}`
+    );
+    const req = makeRequest({ authorization: 'Payment mpp-cred' });
+    expect(await freshExtract(req)).toBeNull();
+    vi.doUnmock('mppx');
+  });
+
+  it('logs and falls through when mppx throws during extraction', async () => {
+    vi.doMock('mppx', () => ({
+      Credential: {
+        extractPaymentScheme: () => { throw new Error('mpp parse failed'); },
+        fromRequest: () => ({}),
+      },
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { extractPaymentSignerAddress: freshExtract } = await import(
+      `../src/signer?mpp-throw=${Date.now()}`
+    );
+    const req = makeRequest({ authorization: 'Payment mpp-cred' });
+    expect(await freshExtract(req)).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    vi.doUnmock('mppx');
+  });
 });

@@ -62,8 +62,10 @@ describe('source code structure', () => {
     expect(call2[1].headers['User-Agent']).toMatch(/^express-app\/1\.0\.0 \(@agent-score\/gate@\d+\.\d+\.\d+\)$/);
   });
 
-  it('Express defaultOnDenied includes verify_url in response body', () => {
-    expect(expressSrc).toContain('reason.verify_url');
+  it('Express defaultOnDenied delegates body marshaling to the shared _response helper', () => {
+    // The marshaling (verify_url, session_id, agent_memory, wallet-signer fields, extra)
+    // lives in src/_response.ts now; every adapter calls denialReasonToBody().
+    expect(expressSrc).toContain('denialReasonToBody');
   });
 });
 
@@ -616,5 +618,87 @@ describe('compliance options edge cases', () => {
     const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const body = JSON.parse(fetchCall[1].body as string);
     expect(body.policy.require_sanctions_clear).toBe(false);
+  });
+});
+
+describe('evaluate() — 401 passthrough edge cases', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('passes through token_expired with agent_instructions when API returns 401 + next_steps', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({
+        json: async () => ({
+          error: { code: 'token_expired', message: 'expired' },
+          next_steps: { action: 'mint_new_credential' },
+        }),
+      }),
+    } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res, status, json } = makeRes();
+    const next = makeNext();
+    await mw(req, res, next);
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'token_expired',
+      agent_instructions: expect.stringContaining('mint_new_credential'),
+    }));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('passes through token_revoked without agent_instructions when next_steps absent', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({ json: async () => ({ error: { code: 'token_revoked' } }) }),
+    } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res, status, json } = makeRes();
+    await mw(req, res, makeNext());
+
+    expect(status).toHaveBeenCalledWith(403);
+    const body = json.mock.calls[0]![0] as Record<string, unknown>;
+    expect(body.error).toBe('token_revoked');
+    expect(body).not.toHaveProperty('agent_instructions');
+  });
+
+  it('falls through to generic api_error when 401 body has unknown error.code', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({ json: async () => ({ error: { code: 'something_unknown' } }) }),
+    } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res, status, json } = makeRes();
+    await mw(req, res, makeNext());
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'api_error' }));
+  });
+
+  it('falls through to generic api_error when 401 body fails to parse as JSON', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({ json: async () => { throw new Error('not JSON'); } }),
+    } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res, status, json } = makeRes();
+    await mw(req, res, makeNext());
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'api_error' }));
   });
 });

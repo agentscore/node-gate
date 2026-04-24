@@ -185,6 +185,106 @@ describe('AgentScoreCore.verifyWalletSignerMatch', () => {
   });
 });
 
+describe('AgentScoreCore.verifyWalletSignerMatch — coverage paths', () => {
+  it('reads the plain evaluate() cache when the same wallet was gated first', async () => {
+    // Pre-warm: evaluate() writes under the wallet key. Subsequent verify should
+    // NOT hit the API again for the claimed side.
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValueOnce({
+        decision: 'allow',
+        decision_reasons: [],
+        resolved_operator: 'op_shared',
+        linked_wallets: ['0xaaa0000000000000000000000000000000000001'],
+      }),
+    } as unknown as Response).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValueOnce({ resolved_operator: 'op_shared', linked_wallets: [] }),
+    } as unknown as Response).mockResolvedValue({ ok: true, status: 201, json: async () => ({}) });
+
+    const core = createAgentScoreCore({ apiKey: API_KEY });
+    // Prime: evaluate the claimed wallet to populate the plain cache.
+    await core.evaluate({ address: '0xaaa0000000000000000000000000000000000000' });
+    const fetchCallsBefore = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    const result = await core.verifyWalletSignerMatch({
+      claimedWallet: '0xaaa0000000000000000000000000000000000000',
+      signer: '0xbbb0000000000000000000000000000000000000',
+    });
+
+    expect(result.kind).toBe('pass');
+    // Only the signer side (+ telemetry) hits the network; the claimed side uses the cache.
+    const callUrls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls
+      .slice(fetchCallsBefore)
+      .map((c) => c[0] as string);
+    const assessForClaimed = callUrls.filter(
+      (u) => u.includes('/v1/assess'),
+    ).length;
+    expect(assessForClaimed).toBe(1); // only the signer wallet resolve, not claimed
+  });
+
+  it('reuses the resolve: cache across calls', async () => {
+    let assessCount = 0;
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if ((url as string).includes('/v1/assess')) {
+        assessCount++;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ resolved_operator: 'op_shared', linked_wallets: [] }),
+        } as unknown as Response;
+      }
+      return { ok: true, status: 201, json: async () => ({}) } as unknown as Response;
+    });
+    const core = createAgentScoreCore({ apiKey: API_KEY });
+    const opts = {
+      claimedWallet: '0xaaa0000000000000000000000000000000000000',
+      signer: '0xbbb0000000000000000000000000000000000000',
+    };
+    await core.verifyWalletSignerMatch(opts);
+    const first = assessCount;
+    await core.verifyWalletSignerMatch(opts);
+    // Second run hits the resolve: cache for both wallets — no extra /v1/assess calls.
+    expect(assessCount).toBe(first);
+  });
+
+  it('401 with non-JSON body falls through to generic error (ok: false)', async () => {
+    // The 401 passthrough tries to parse JSON. When the body isn't JSON, the catch
+    // block swallows and the outer !response.ok check throws. The gate catches that
+    // and returns ok: false (api_error for verify, fail-open/deny for evaluate).
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({ json: () => Promise.reject(new Error('not JSON')) }),
+      json: () => Promise.reject(new Error('not JSON')),
+    } as unknown as Response);
+    const core = createAgentScoreCore({ apiKey: API_KEY });
+    const result = await core.verifyWalletSignerMatch({
+      claimedWallet: '0xaaa0000000000000000000000000000000000000',
+      signer: '0xbbb0000000000000000000000000000000000000',
+    });
+    expect(result.kind).toBe('api_error');
+  });
+
+  it('401 with unknown error.code falls through to generic error', async () => {
+    // error.code is present but not token_expired/token_revoked → passthrough block
+    // doesn't match, outer !response.ok throws, verify returns api_error.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({ json: async () => ({ error: { code: 'something_unexpected' } }) }),
+    } as unknown as Response);
+    const core = createAgentScoreCore({ apiKey: API_KEY });
+    const result = await core.verifyWalletSignerMatch({
+      claimedWallet: '0xaaa0000000000000000000000000000000000000',
+      signer: '0xbbb0000000000000000000000000000000000000',
+    });
+    expect(result.kind).toBe('api_error');
+  });
+});
+
 describe('AgentScoreCore.verifyWalletSignerMatch — telemetry', () => {
   const TELEMETRY_WALLET = '0x1111111111111111111111111111111111111111';
 
@@ -409,6 +509,102 @@ describe('verifyWalletSignerMatch adapter parity — both headers no-op', () => 
     expect(body.kind).toBe('pass');
     expect(body.claimedOperator).toBeNull();
     await app.close();
+  });
+
+  it('express adapter calls through to core.verifyWalletSignerMatch on strict wallet-auth', async () => {
+    const { agentscoreGate: expressGate, verifyWalletSignerMatch: expressVerify } =
+      await import('../src/adapters/express');
+
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if ((url as string).includes('/v1/assess')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ resolved_operator: 'op_victim', linked_wallets: [] }),
+        } as unknown as Response;
+      }
+      return { ok: true, status: 201, json: async () => ({}) } as unknown as Response;
+    });
+
+    const mw = expressGate({ apiKey: API_KEY });
+    const req = {
+      headers: { 'x-wallet-address': '0xaaa0000000000000000000000000000000000000' },
+    } as unknown as import('express').Request;
+    const res = { status: vi.fn().mockReturnValue({ json: vi.fn() }) } as unknown as import('express').Response;
+    await mw(req, res, vi.fn());
+
+    const result = await expressVerify(req, { signer: '0xaaa0000000000000000000000000000000000000' });
+    expect(result.kind).toBe('pass');
+  });
+
+  it('fastify adapter calls through to core.verifyWalletSignerMatch on strict wallet-auth', async () => {
+    const fastifyMod = await import('fastify').catch(() => null);
+    if (!fastifyMod) { return; }
+    const { default: Fastify } = fastifyMod;
+    const { agentscoreGate: fastifyPlugin, verifyWalletSignerMatch: fastifyVerify } =
+      await import('../src/adapters/fastify');
+
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if ((url as string).includes('/v1/assess')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ resolved_operator: 'op_victim', linked_wallets: [] }),
+        } as unknown as Response;
+      }
+      return { ok: true, status: 201, json: async () => ({}) } as unknown as Response;
+    });
+
+    const app = Fastify();
+    await app.register(fastifyPlugin, { apiKey: API_KEY });
+    app.get('/test', async (req) => {
+      const result = await fastifyVerify(req, { signer: '0xaaa0000000000000000000000000000000000000' });
+      return result;
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/test',
+      headers: { 'x-wallet-address': '0xaaa0000000000000000000000000000000000000' },
+    });
+    const body = res.json() as Record<string, unknown>;
+    expect(body.kind).toBe('pass');
+    await app.close();
+  });
+
+  it('web (fetch) adapter auto-extracts signer from request when opts.signer is undefined', async () => {
+    const { createAgentScoreGate } = await import('../src/adapters/web');
+    const signerLower = '0xccc0000000000000000000000000000000000000';
+    const x402Payload = Buffer.from(JSON.stringify({
+      payload: { authorization: { from: signerLower } },
+    })).toString('base64');
+
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if ((url as string).includes('/v1/assess')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ resolved_operator: 'op_shared', linked_wallets: [] }),
+        } as unknown as Response;
+      }
+      return { ok: true, status: 201, json: async () => ({}) } as unknown as Response;
+    });
+
+    const guard = createAgentScoreGate({ apiKey: API_KEY });
+    const req = new Request('http://localhost/test', {
+      headers: {
+        'x-wallet-address': '0xaaa0000000000000000000000000000000000000',
+        'payment-signature': x402Payload,
+      },
+    });
+    const outcome = await guard(req);
+    expect(outcome.allowed).toBe(true);
+    if (outcome.allowed) {
+      // No opts → auto-extract from the request.
+      const result = await outcome.verifyWalletSignerMatch!();
+      // Both resolve to op_shared → same-operator pass.
+      expect(result.kind).toBe('pass');
+    }
   });
 
   it('web (fetch) adapter does not bind verifyWalletSignerMatch when both headers sent', async () => {

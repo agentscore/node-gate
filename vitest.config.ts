@@ -11,15 +11,12 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],
-      // signer.ts MPP path requires `mppx` as an optional peer dep; the `catch`
-      // branch covering a dynamic-import failure isn't reached without installing
-      // and mocking mppx, which the gate test env deliberately avoids.
-      exclude: ['src/signer.ts', 'tests/**', 'dist/**'],
+      exclude: ['tests/**', 'dist/**'],
       thresholds: {
-        statements: 90,
-        branches: 85,
-        functions: 90,
-        lines: 90,
+        statements: 95,
+        branches: 90,
+        functions: 95,
+        lines: 95,
       },
     },
   },
