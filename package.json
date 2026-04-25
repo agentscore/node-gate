@@ -1,6 +1,6 @@
 {
   "name": "@agent-score/gate",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Trust-gating middleware for Node.js web frameworks (Express, Hono, Next.js, Fastify, Web Fetch) using AgentScore",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -76,7 +76,7 @@
     "type": "git",
     "url": "https://github.com/agentscore/node-gate"
   },
-  "homepage": "https://docs.agentscore.sh",
+  "homepage": "https://agentscore.sh",
   "bugs": {
     "url": "https://github.com/agentscore/node-gate/issues"
   },
@@ -109,7 +109,7 @@
     "eslint-plugin-unused-imports": "^4.4.1",
     "express": "^5.2.1",
     "fastify": "^5.8.5",
-    "hono": "^4.12.14",
+    "hono": "^4.12.15",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.0",

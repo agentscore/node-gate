@@ -1,5 +1,14 @@
+import { denialReasonToBody } from '../_response';
 import { createAgentScoreCore } from '../core';
-import type { AgentIdentity, AgentScoreCore, AgentScoreCoreOptions, CreateSessionOnMissing, DenialReason } from '../core';
+import { extractPaymentSignerAddress, readX402PaymentHeader } from '../signer';
+import type {
+  AgentIdentity,
+  AgentScoreCore,
+  AgentScoreCoreOptions,
+  CreateSessionOnMissing,
+  DenialReason,
+  VerifyWalletSignerResult,
+} from '../core';
 import type { Request, Response, NextFunction } from 'express';
 
 const GATE_STATE_KEY = '__agentscoreGate';
@@ -7,6 +16,7 @@ const GATE_STATE_KEY = '__agentscoreGate';
 interface GateState {
   core: AgentScoreCore;
   operatorToken?: string;
+  walletAddress?: string;
 }
 
 export interface AgentScoreGateOptions extends Omit<AgentScoreCoreOptions, 'createSessionOnMissing'> {
@@ -29,16 +39,7 @@ function defaultExtractIdentity(req: Request): AgentIdentity | undefined {
 }
 
 function defaultOnDenied(_req: Request, res: Response, reason: DenialReason): void {
-  const body: Record<string, unknown> = { error: reason.code };
-  if (reason.decision) body.decision = reason.decision;
-  if (reason.reasons) body.reasons = reason.reasons;
-  if (reason.verify_url) body.verify_url = reason.verify_url;
-  if (reason.session_id) body.session_id = reason.session_id;
-  if (reason.poll_secret) body.poll_secret = reason.poll_secret;
-  if (reason.poll_url) body.poll_url = reason.poll_url;
-  if (reason.agent_instructions) body.agent_instructions = reason.agent_instructions;
-  if (reason.extra) Object.assign(body, reason.extra);
-  res.status(403).json(body);
+  res.status(403).json(denialReasonToBody(reason));
 }
 
 export function agentscoreGate(options: AgentScoreGateOptions) {
@@ -56,6 +57,7 @@ export function agentscoreGate(options: AgentScoreGateOptions) {
     (req as unknown as Record<string, unknown>)[GATE_STATE_KEY] = {
       core,
       operatorToken: identity?.operatorToken,
+      walletAddress: identity?.address,
     } satisfies GateState;
 
     const outcome = await core.evaluate(identity, req);
@@ -88,3 +90,31 @@ export async function captureWallet(
     idempotencyKey: options.idempotencyKey,
   });
 }
+
+/**
+ * Verify the payment signer resolves to the same operator as the claimed X-Wallet-Address.
+ * See hono adapter for the full contract.
+ *
+ * Because Express `Request` isn't a web `Request`, the caller must pass both the original
+ * Fetch-style `Request` (if available — e.g. middleware upstream) and/or the x402 header value.
+ * Simpler pattern: pass `options.signer` directly after extracting it yourself.
+ */
+export async function verifyWalletSignerMatch(
+  req: Request,
+  options: { signer: string | null; network?: 'evm' | 'solana' },
+): Promise<VerifyWalletSignerResult> {
+  const state = (req as unknown as Record<string, GateState | undefined>)[GATE_STATE_KEY];
+  // Operator-token wins when both headers sent — signer-match must no-op on non-strict-wallet-auth.
+  if (!state?.walletAddress || state.operatorToken) {
+    return { kind: 'pass', claimedOperator: null, signerOperator: null };
+  }
+  return state.core.verifyWalletSignerMatch({
+    claimedWallet: state.walletAddress,
+    signer: options.signer,
+    network: options.network,
+  });
+}
+
+// Re-export shared signer helpers so Express consumers can extract from Fetch-style Requests
+// if they have one on hand (e.g. edge proxies forwarding the raw Request).
+export { extractPaymentSignerAddress, readX402PaymentHeader };

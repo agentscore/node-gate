@@ -22,7 +22,7 @@ const SESSION_RESPONSE = {
   session_id: 'sess_123',
   poll_secret: 'ps_secret',
   verify_url: 'https://agentscore.sh/verify/new',
-  agent_instructions: 'Ask the user to verify',
+  next_steps: { action: 'deliver_verify_url_and_poll', user_message: 'Ask the user to verify' },
 };
 
 function mockFetchOk(body: unknown): void {
@@ -84,7 +84,7 @@ describe('Web Fetch adapter — createAgentScoreGate', () => {
     expect(result.allowed).toBe(false);
     if (!result.allowed) {
       expect(result.response.status).toBe(403);
-      expect(await result.response.json()).toEqual({ error: 'missing_identity' });
+      expect(await result.response.json()).toMatchObject({ error: 'missing_identity' });
     }
   });
 
@@ -99,7 +99,7 @@ describe('Web Fetch adapter — createAgentScoreGate', () => {
 
     expect(result.allowed).toBe(false);
     if (!result.allowed) {
-      expect(await result.response.json()).toEqual({ error: 'missing_identity' });
+      expect(await result.response.json()).toMatchObject({ error: 'missing_identity' });
     }
     expect(global.fetch).not.toHaveBeenCalled();
   });

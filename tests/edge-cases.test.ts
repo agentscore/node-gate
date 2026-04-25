@@ -62,8 +62,10 @@ describe('source code structure', () => {
     expect(call2[1].headers['User-Agent']).toMatch(/^express-app\/1\.0\.0 \(@agent-score\/gate@\d+\.\d+\.\d+\)$/);
   });
 
-  it('Express defaultOnDenied includes verify_url in response body', () => {
-    expect(expressSrc).toContain('reason.verify_url');
+  it('Express defaultOnDenied delegates body marshaling to the shared _response helper', () => {
+    // The marshaling (verify_url, session_id, agent_memory, wallet-signer fields, extra)
+    // lives in src/_response.ts now; every adapter calls denialReasonToBody().
+    expect(expressSrc).toContain('denialReasonToBody');
   });
 });
 
@@ -232,6 +234,27 @@ describe('invalid wallet header edge cases', () => {
     expect(next).not.toHaveBeenCalled();
     expect(status).toHaveBeenCalledWith(403);
     expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'missing_identity' }));
+  });
+
+  it('missing_identity body carries probe_identity_then_session instructions', async () => {
+    // Bare bootstrap denial describes the full probe strategy — wallet-first on
+    // signing rails, fall back to stored opc_..., fall back to session flow — so
+    // agents without durable memory recover in at most one extra round trip.
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq();
+    const { res, json } = makeRes();
+    await mw(req, res, makeNext());
+
+    const body = json.mock.calls[0]![0] as Record<string, unknown>;
+    expect(body.error).toBe('missing_identity');
+    expect(body.agent_instructions).toBeDefined();
+    const instructions = JSON.parse(body.agent_instructions as string) as Record<string, unknown>;
+    expect(instructions.action).toBe('probe_identity_then_session');
+    expect(Array.isArray(instructions.steps)).toBe(true);
+    expect((instructions.steps as string[]).length).toBeGreaterThanOrEqual(3);
+    expect(instructions.user_message).toMatch(/X-Wallet-Address|X-Operator-Token/);
+    // agent_memory still present for cross-merchant pattern hint
+    expect(body.agent_memory).toBeDefined();
   });
 
 });
@@ -616,5 +639,133 @@ describe('compliance options edge cases', () => {
     const fetchCall = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const body = JSON.parse(fetchCall[1].body as string);
     expect(body.policy.require_sanctions_clear).toBe(false);
+  });
+});
+
+describe('evaluate() — 401 passthrough edge cases', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('passes through token_expired with auto-session fields from the API 401 body', async () => {
+    // Revoked and expired credentials both surface as token_expired from the API with
+    // an auto-minted session in the 401 body. Gate forwards all session fields so the
+    // 403 downstream carries verify_url + session_id + poll_secret for agent recovery.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({
+        json: async () => ({
+          error: { code: 'token_expired', message: 'invalid' },
+          session_id: 'sess_auto',
+          poll_secret: 'poll_auto',
+          verify_url: 'https://agentscore.sh/verify?session=sess_auto',
+          poll_url: 'https://api.agentscore.sh/v1/sessions/sess_auto',
+          next_steps: { action: 'deliver_verify_url_and_poll' },
+        }),
+      }),
+    } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res, status, json } = makeRes();
+    const next = makeNext();
+    await mw(req, res, next);
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'token_expired',
+      session_id: 'sess_auto',
+      poll_secret: 'poll_auto',
+      verify_url: 'https://agentscore.sh/verify?session=sess_auto',
+      agent_instructions: expect.stringContaining('deliver_verify_url_and_poll'),
+    }));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('passes through token_expired without agent_instructions when next_steps absent', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({ json: async () => ({ error: { code: 'token_expired' } }) }),
+    } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res, status, json } = makeRes();
+    await mw(req, res, makeNext());
+
+    expect(status).toHaveBeenCalledWith(403);
+    const body = json.mock.calls[0]![0] as Record<string, unknown>;
+    expect(body.error).toBe('token_expired');
+    expect(body).not.toHaveProperty('agent_instructions');
+  });
+
+  it('falls through to generic api_error when 401 body has unknown error.code', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({ json: async () => ({ error: { code: 'something_unknown' } }) }),
+    } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res, status, json } = makeRes();
+    await mw(req, res, makeNext());
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'api_error' }));
+    // Used to be silent — schema drift would mask itself for hours. Now logs the
+    // unknown code so ops notice without crashing the request.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('something_unknown'));
+    warn.mockRestore();
+  });
+
+  it('emits invalid_credential 403 (not retry-suggesting api_error) for permanent token failures', async () => {
+    // The API returns 401 invalid_credential when the token doesn't exist at all
+    // (typo, never minted). Distinct from token_expired (which carries an auto-session)
+    // — invalid_credential has no recovery payload, the agent must switch tokens or
+    // restart the session flow. Used to fall through to api_error → 503 retry which
+    // looped forever on a permanent state.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({ json: async () => ({ error: { code: 'invalid_credential', message: 'Operator credential not found' } }) }),
+    } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res, status, json } = makeRes();
+    await mw(req, res, makeNext());
+
+    expect(status).toHaveBeenCalledWith(403);
+    const body = json.mock.calls[0]![0] as Record<string, unknown>;
+    expect(body.error).toBe('invalid_credential');
+    // No session fields — API didn't mint one for this case. Agent gets actionable copy.
+    expect(body).not.toHaveProperty('verify_url');
+    expect(body).not.toHaveProperty('session_id');
+    expect(body.agent_instructions).toBeDefined();
+    const instructions = JSON.parse(body.agent_instructions as string);
+    expect(instructions.action).toBe('switch_token_or_restart_session');
+    // agent_memory is also forwarded (cross-merchant pattern hint) so agents know
+    // how to bootstrap a fresh session via the merchant's createSessionOnMissing.
+    expect(body.agent_memory).toBeDefined();
+  });
+
+  it('falls through to generic api_error when 401 body fails to parse as JSON', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({ json: async () => { throw new Error('not JSON'); } }),
+    } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res, status, json } = makeRes();
+    await mw(req, res, makeNext());
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'api_error' }));
   });
 });

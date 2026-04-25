@@ -185,7 +185,7 @@ describe('Next.js adapter — withAgentScoreGate (route handler wrapper)', () =>
       session_id: 'sess_nx1',
       poll_secret: 'ps_nx',
       verify_url: 'https://agentscore.sh/verify/nx',
-      agent_instructions: 'Verify to continue',
+      next_steps: { action: 'deliver_verify_url_and_poll', user_message: 'Verify to continue' },
     };
     mockFetchOk(SESSION_RESPONSE);
     const POST = withAgentScoreGate(
@@ -356,7 +356,7 @@ describe('Next.js adapter — agentscoreMiddleware', () => {
 
     expect(result?.status).toBe(403);
     const body = await result?.json();
-    expect(body).toEqual({ error: 'missing_identity' });
+    expect(body).toMatchObject({ error: 'missing_identity' });
   });
 });
 

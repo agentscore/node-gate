@@ -68,6 +68,24 @@ app.post("/purchase", async (c) => {
 
 The same `captureWallet` helper is exported from `/express`, `/fastify`, `/web`, and `/nextjs` with framework-native signatures.
 
+Verify the payment signer matches the claimed wallet. Call after the agent submits a payment credential, before settlement. Auto-extracts the signer from MPP `Authorization: Payment` or x402 `payment-signature` / `x-payment` headers; pass `options.signer` to override. No-ops on operator-token requests.
+
+```typescript
+import { verifyWalletSignerMatch } from "@agent-score/gate/hono";
+
+app.post("/purchase", async (c) => {
+  const match = await verifyWalletSignerMatch(c);
+  if (match.kind !== "pass") {
+    return c.json({ error: match.kind, ...match }, 403);
+  }
+  // ... settle payment ...
+});
+```
+
+`match.kind` is `"pass" | "wallet_signer_mismatch" | "wallet_auth_requires_wallet_signing" | "api_error"`. Non-pass / non-api_error variants include `claimedOperator`, `actualSignerOperator`, `expectedSigner`, `actualSigner`, `linkedWallets`, and `agentInstructions` (JSON-encoded action copy merchants spread directly into the 403 body).
+
+Exported from `/hono`, `/express`, `/fastify`. On `/nextjs` and `/web`, access via `gate.verifyWalletSignerMatch?.()` on the handler's gate argument (request-scoped adapters bind helpers into the handler callback rather than exposing module-level functions).
+
 ### Express
 
 ```typescript
@@ -173,9 +191,20 @@ All adapters share the same core options:
 
 By default, each adapter checks `X-Operator-Token` first, then `X-Wallet-Address`. You can override with a custom `extractIdentity` that matches your framework's request shape.
 
+## Denial bodies
+
+Every 403 body carries `agent_instructions` — a JSON-encoded `{action, steps, user_message}` block so agents act from the response itself, no discovery-doc round trip. Actions:
+
+| Code | `action` |
+|---|---|
+| `missing_identity` | `probe_identity_then_session` (try wallet on signing rails → stored opc_... → session flow) |
+| `wallet_signer_mismatch` | `resign_or_switch_to_operator_token` (body also carries `claimed_operator`, `actual_signer_operator`, `expected_signer`, `actual_signer`, `linked_wallets`) |
+| `wallet_auth_requires_wallet_signing` | `switch_to_operator_token` |
+| `token_expired` | `deliver_verify_url_and_poll` (API auto-mints a session in the 401 body; unified code for both TTL-expired and revoked) |
+
 ## Auto-Create Session
 
-When no identity is found and `createSessionOnMissing` is set, the gate creates a verification session and returns a 403 with `verify_url`, `session_id`, `poll_secret`, `poll_url`, and `agent_instructions`. The agent polls `poll_url` with `X-Poll-Secret: {poll_secret}` to completion, then retries with the resulting `operator_token`.
+When no identity is found and `createSessionOnMissing` is set, the gate creates a verification session and returns a 403 with `verify_url`, `session_id`, `poll_secret`, `poll_url`, `agent_instructions`, and `agent_memory` (cross-merchant pattern hint). The agent polls `poll_url` with `X-Poll-Secret: {poll_secret}` to completion, then retries with the resulting `operator_token`.
 
 ```typescript
 createSessionOnMissing: {

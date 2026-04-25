@@ -1,6 +1,6 @@
 import { createAgentScoreGate } from './web';
 import type { AgentScoreGateOptions as WebAgentScoreGateOptions } from './web';
-import type { AgentScoreData } from '../core';
+import type { AgentScoreData, VerifyWalletSignerResult } from '../core';
 
 export type AgentScoreGateOptions = WebAgentScoreGateOptions;
 
@@ -36,6 +36,10 @@ export function withAgentScoreGate<TReq extends Request = Request, TCtx = unknow
         network: 'evm' | 'solana';
         idempotencyKey?: string;
       }) => Promise<void>;
+      verifyWalletSignerMatch?: (opts?: {
+        signer?: string | null;
+        network?: 'evm' | 'solana';
+      }) => Promise<VerifyWalletSignerResult>;
     },
     ctx?: TCtx,
   ) => Response | Promise<Response>,
@@ -44,7 +48,15 @@ export function withAgentScoreGate<TReq extends Request = Request, TCtx = unknow
   return async (req, ctx) => {
     const result = await guard(req as Request);
     if (!result.allowed) return result.response;
-    return handler(req, { data: result.data, captureWallet: result.captureWallet }, ctx);
+    return handler(
+      req,
+      {
+        data: result.data,
+        captureWallet: result.captureWallet,
+        verifyWalletSignerMatch: result.verifyWalletSignerMatch,
+      },
+      ctx,
+    );
   };
 }
 

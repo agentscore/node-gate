@@ -706,7 +706,7 @@ describe('agentscoreGate middleware — verify_url and operator_verification in 
       session_id: 'sess_ex1',
       poll_secret: 'ps_ex',
       verify_url: 'https://agentscore.sh/verify/ex',
-      agent_instructions: 'Verify to continue',
+      next_steps: { action: 'deliver_verify_url_and_poll', user_message: 'Verify to continue' },
     });
     const mw = agentscoreGate({
       apiKey: API_KEY,
@@ -1013,7 +1013,10 @@ describe('agentscoreGate middleware — createSessionOnMissing', () => {
     session_id: 'sess_abc123',
     verify_url: 'https://agentscore.sh/verify/sess_abc123',
     poll_secret: 'ps_secret_456',
-    agent_instructions: 'Please complete identity verification at the verify_url.',
+    next_steps: {
+      action: 'deliver_verify_url_and_poll',
+      user_message: 'Please complete identity verification at the verify_url.',
+    },
   };
 
   afterEach(() => {
@@ -1044,8 +1047,12 @@ describe('agentscoreGate middleware — createSessionOnMissing', () => {
       verify_url: 'https://agentscore.sh/verify/sess_abc123',
       session_id: 'sess_abc123',
       poll_secret: 'ps_secret_456',
-      agent_instructions: 'Please complete identity verification at the verify_url.',
     }));
+    // agent_instructions is the JSON-stringified next_steps from the API.
+    const bodyArg = (json as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+    const parsed = JSON.parse(bodyArg.agent_instructions as string);
+    expect(parsed.action).toBe('deliver_verify_url_and_poll');
+    expect(parsed.user_message).toBe('Please complete identity verification at the verify_url.');
   });
 
   it('calls POST /v1/sessions with the session apiKey', async () => {
