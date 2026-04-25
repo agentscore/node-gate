@@ -649,7 +649,7 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
           if (code && code !== 'token_expired' && code !== 'invalid_credential') {
             console.warn(
               `[gate] /v1/assess returned ${response.status} ${code} — surfacing as api_error. ` +
-              `Validate input shape before invoking the gate to avoid this.`,
+              'Validate input shape before invoking the gate to avoid this.',
             );
           }
         } catch {
