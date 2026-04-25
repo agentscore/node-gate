@@ -11,7 +11,7 @@ The gate supports two identity types via the `extractIdentity` option (backwards
 
 Default behavior checks `X-Operator-Token` first, then `X-Wallet-Address`. The extracted identity is sent to AgentScore's `/v1/assess` endpoint as either `address` or `operator_token`.
 
-Types: `AgentIdentity`, `CreateSessionOnMissing`, `DenialReason` (with `missing_identity`, `token_expired`, `wallet_signer_mismatch`, `wallet_auth_requires_wallet_signing` + the legacy codes — `token_expired` unifies revoked + TTL-expired, API doesn't disclose which), `VerifyWalletSignerMatchOptions`, `VerifyWalletSignerResult`.
+Types: `AgentIdentity`, `CreateSessionOnMissing`, `DenialReason` (with `missing_identity`, `token_expired`, `invalid_credential`, `wallet_signer_mismatch`, `wallet_auth_requires_wallet_signing` + the legacy codes — `token_expired` covers revoked + TTL-expired and carries an auto-session for recovery; `invalid_credential` covers tokens that never existed, no auto-session because the agent likely has another stored token to try), `VerifyWalletSignerMatchOptions`, `VerifyWalletSignerResult`. Address normalization is network-aware via `src/address.ts` (`normalizeAddress`): EVM lowercased, Solana base58 preserved verbatim — used for cache keys, wallet→operator resolves, and signer-match comparisons so cross-chain captured wallets resolve correctly.
 
 `createSessionOnMissing` option: when set and no identity found, creates a verification session and returns 403 with verify_url + poll instructions instead of a bare denial. Two optional hooks let merchants bring per-request context: `getSessionOptions(ctx)` overrides `context`/`productName` per request (sync or async), and `onBeforeSession(ctx, session)` runs a side effect after the session mints with its return dict merged into `DenialReason.extra` (surfaces in the 403 body). Both receive the framework-native context (Hono `Context`, Express `Request`, etc.). Hook errors are swallowed with a log.
 
@@ -27,6 +27,9 @@ Every gate-emitted denial carries an `agent_instructions` JSON string (`{action,
 - `wallet_signer_mismatch` → `resign_or_switch_to_operator_token` (re-sign from `expectedSigner` / any `linkedWallets`, or drop the wallet header and use opc_...)
 - `wallet_auth_requires_wallet_signing` → `switch_to_operator_token` (non-signing rail; drop wallet header)
 - `token_expired` — the API emits an auto-minted session in the 401 body (verify_url + session_id + poll_secret + next_steps) and the gate forwards all of it into the DenialReason so the 403 body carries everything the agent needs to recover. Covers revoked + TTL-expired transparently.
+- `invalid_credential` → `switch_token_or_restart_session` — token doesn't exist (typo, fabricated). Permanent: no auto-session is issued because the agent likely has another stored `opc_...` to try. If not, drop the header to bootstrap a fresh session via `createSessionOnMissing`. Distinct from `token_expired` so agents can correctly stop retrying instead of looping on a permanent state.
+
+Silent fall-throughs in the gate's evaluate path (`} catch {}`) used to mask schema drift and unreachable-API issues for hours. Each catch now logs at warn level — same fall-through to `api_error`, just visible: `[gate] /v1/assess call failed`, `[gate] createSessionOnMissing path failed`, `[gate] /v1/assess 401 body parse failed`, `[gate] resolveWalletToOperator failed`.
 
 Convention is consistent with the API's structured `next_steps` responses: same `{action, user_message}` shape, but the gate wraps it as a JSON string inside `agent_instructions`. `user_message` always lives INSIDE (never duplicated at top level).
 
