@@ -1,3 +1,4 @@
+import { normalizeAddress } from './address';
 import { TTLCache } from './cache';
 
 // Character-based trim avoids a CodeQL polynomial-redos false positive on
@@ -497,7 +498,11 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
       };
     }
 
-    const cacheKey = identity.operatorToken?.toLowerCase() ?? identity.address?.toLowerCase() ?? '';
+    // operator_token is opaque + ASCII-only — lowercasing is safe. Wallet addresses go
+    // through normalizeAddress because Solana base58 is case-sensitive and lowercasing
+    // would corrupt the cache key (a Solana cache miss every time, plus collision risk
+    // with mixed-case variants of the same operator).
+    const cacheKey = identity.operatorToken?.toLowerCase() ?? (identity.address ? normalizeAddress(identity.address) : '');
 
     const cached = cache.get(cacheKey);
     if (cached) {
@@ -656,7 +661,10 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
   async function resolveWalletToOperator(
     walletAddress: string,
   ): Promise<{ ok: true; operator: string | null; linkedWallets: string[] } | { ok: false }> {
-    const wallet = walletAddress.toLowerCase();
+    // Network-aware: lowercases EVM, preserves Solana base58 case. The DB stores both
+    // formats verbatim in operator_credential_wallets.wallet_address; lowercasing a
+    // Solana address would never match.
+    const wallet = normalizeAddress(walletAddress);
 
     // Cache lookup — first the plain cache (populated by evaluate() for identity-headered wallets).
     // Saves a second /v1/assess call when the gate already looked up this wallet.
@@ -738,25 +746,28 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
       };
     }
 
-    const claimedLower = claimedWallet.toLowerCase();
-    const signerLower = signer.toLowerCase();
+    // Network-aware normalization: lowercase EVM, preserve Solana base58. The byte-equal
+    // short-circuit and downstream cache-key derivation MUST match how the DB stores
+    // wallets; lowercasing Solana would corrupt both.
+    const claimedNorm = normalizeAddress(claimedWallet);
+    const signerNorm = normalizeAddress(signer);
 
     // Byte-equal short-circuit — no API lookup; same wallet ≡ same operator by definition.
-    if (claimedLower === signerLower) {
+    if (claimedNorm === signerNorm) {
       reportSignerEvent('pass');
       return { kind: 'pass', claimedOperator: null, signerOperator: null };
     }
 
     const [claimedResolve, signerResolve] = await Promise.all([
-      resolveWalletToOperator(claimedLower),
-      resolveWalletToOperator(signerLower),
+      resolveWalletToOperator(claimedNorm),
+      resolveWalletToOperator(signerNorm),
     ]);
 
     // Transient API failure on either resolve → emit api_error. Caller should retry or
     // surface 503 rather than falsely reject a legitimate user on a network flake.
     if (!claimedResolve.ok || !signerResolve.ok) {
       reportSignerEvent('api_error');
-      return { kind: 'api_error', claimedWallet: claimedLower };
+      return { kind: 'api_error', claimedWallet: claimedNorm };
     }
 
     const claimedOperator = claimedResolve.operator;
@@ -772,8 +783,8 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
       kind: 'wallet_signer_mismatch',
       claimedOperator,
       actualSignerOperator: signerOperator,
-      expectedSigner: claimedLower,
-      actualSigner: signerLower,
+      expectedSigner: claimedNorm,
+      actualSigner: signerNorm,
       // Populated from /v1/assess.linked_wallets on the claimed wallet — the full set of
       // wallets the agent CAN sign with to satisfy the claim (same-operator rule).
       linkedWallets: claimedResolve.linkedWallets,

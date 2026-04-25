@@ -2,16 +2,20 @@
  * Payment-signer extraction.
  *
  * Shared between merchants and the gate — both need to recover the on-chain signer from
- * a payment credential without duplicating code. Two rails carry a wallet signer:
+ * a payment credential without duplicating code. Three rails carry a wallet signer:
  *
  *   - **Tempo MPP** — `Authorization: Payment <base64>` header; credential `source` is a DID
  *     of the form `did:pkh:eip155:<chain>:<address>`.
- *   - **x402 EIP-3009** — `payment-signature` / `x-payment` header; decoded payload carries
- *     `payload.authorization.from`.
+ *   - **x402 EIP-3009** (EVM, e.g. Base/Sepolia) — `payment-signature` / `x-payment` header;
+ *     decoded payload carries `payload.authorization.from`.
+ *   - **x402 SVM** (Solana) — same headers, but `payload.transaction` is a base64-encoded
+ *     Solana transaction; the SPL Token TransferChecked instruction's source-account owner
+ *     is the signer. Recovered via `@x402/svm`'s `decodeTransactionFromPayload` +
+ *     `getTokenPayerFromTransaction`.
  *
- * `mppx` is an optional peer dependency — we import it dynamically so merchants who don't
- * use MPP don't need to install it. Similarly, x402 extraction is pure JSON parsing with
- * no external dep.
+ * `mppx` and `@x402/svm` are optional peer dependencies — we import them dynamically so
+ * merchants who don't use those rails don't need to install them. The EVM x402 path is pure
+ * JSON parsing with no external dep.
  */
 
 /**
@@ -49,15 +53,48 @@ export async function extractPaymentSignerAddress(
     }
   }
 
-  // x402 — base64 JSON with payload.authorization.from (EIP-3009)
+  // x402 — base64 JSON. Network identifier on `accepted.network` selects the extraction
+  // path: `eip155:*` → EIP-3009 `payload.authorization.from`; `solana:*` → SPL Token
+  // payer recovered from the encoded transaction.
   if (x402PaymentHeader) {
     try {
       // atob is globally available on Node >=16 and every web runtime we ship to.
       const decoded = atob(x402PaymentHeader);
-      const parsed = JSON.parse(decoded) as { payload?: { authorization?: { from?: string } } };
-      const from = parsed?.payload?.authorization?.from;
-      if (typeof from === 'string' && /^0x[0-9a-fA-F]{40}$/.test(from)) {
-        return from.toLowerCase();
+      const parsed = JSON.parse(decoded) as {
+        accepted?: { network?: string };
+        payload?: { authorization?: { from?: string }; transaction?: string };
+      };
+      const network = parsed?.accepted?.network ?? '';
+
+      if (network.startsWith('eip155:')) {
+        const from = parsed?.payload?.authorization?.from;
+        if (typeof from === 'string' && /^0x[0-9a-fA-F]{40}$/.test(from)) {
+          return from.toLowerCase();
+        }
+      } else if (network.startsWith('solana:')) {
+        const transaction = parsed?.payload?.transaction;
+        if (typeof transaction === 'string') {
+          // Optional peer dep — only loaded when a Solana payload is present.
+          const moduleName = '@x402/svm';
+          const svm = (await import(moduleName).catch(() => null)) as {
+            decodeTransactionFromPayload?: (p: { transaction: string }) => unknown;
+            getTokenPayerFromTransaction?: (tx: unknown) => string | undefined;
+          } | null;
+          if (svm?.decodeTransactionFromPayload && svm.getTokenPayerFromTransaction) {
+            const tx = svm.decodeTransactionFromPayload({ transaction });
+            const payer = svm.getTokenPayerFromTransaction(tx);
+            // base58 is case-sensitive — return as-is, never lowercase.
+            if (typeof payer === 'string' && payer.length > 0) return payer;
+          }
+        }
+      } else {
+        // Back-compat: a payload without an `accepted.network` field still uses EIP-3009
+        // shape if `payload.authorization.from` looks EVM. Older x402 clients (before
+        // multi-network) emitted these.
+        const from = parsed?.payload?.authorization?.from;
+        if (typeof from === 'string' && /^0x[0-9a-fA-F]{40}$/.test(from)) {
+          return from.toLowerCase();
+        }
       }
     } catch (err) {
       console.warn('[gate] x402 signer extraction failed:', err instanceof Error ? err.message : err);
