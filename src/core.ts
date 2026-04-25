@@ -101,7 +101,13 @@ export type DenialCode =
   | 'wallet_signer_mismatch'
   | 'wallet_auth_requires_wallet_signing'
   // Granular credential-state denials passed through from /v1/assess.
-  | 'token_expired';
+  // - `token_expired`: revoked + TTL-expired (the API unifies these). The 401 body carries
+  //   an auto-minted session, forwarded into DenialReason for one-shot recovery.
+  // - `invalid_credential`: the token doesn't exist at all (typo, never minted, fabricated).
+  //   No auto-session is minted by the API for this case — agents should switch to a
+  //   different stored token or drop the header to bootstrap a fresh session.
+  | 'token_expired'
+  | 'invalid_credential';
 
 /**
  * Cross-merchant pattern hint emitted on bootstrap denials and session-create responses.
@@ -310,6 +316,21 @@ const WALLET_AUTH_REQUIRES_WALLET_SIGNING_INSTRUCTIONS = JSON.stringify({
     'Wallet-address identity is only supported on wallet-signing rails (Tempo MPP, x402). On Stripe or card, use X-Operator-Token instead.',
 });
 
+// `invalid_credential` is permanent — the token doesn't exist (typo, never minted, fabricated).
+// Distinct from `token_expired` (which carries an auto-session for one-shot recovery): the
+// API doesn't auto-mint a session here because the client may simply have a different valid
+// token to try. Agents should switch tokens or drop the header to bootstrap a session.
+const INVALID_CREDENTIAL_INSTRUCTIONS = JSON.stringify({
+  action: 'switch_token_or_restart_session',
+  steps: [
+    'The X-Operator-Token you sent does not match any credential. This is a permanent state — retrying with the same token will keep failing.',
+    'If you have other stored opc_... credentials, retry with one of them.',
+    'Otherwise drop X-Operator-Token and retry with no identity header — the merchant will mint a fresh verification session in the 403 body (verify_url + poll_secret) so the user can re-verify and you can poll for a new operator_token.',
+  ],
+  user_message:
+    'The operator_token is not recognized. Use a different stored token, or restart the verification session flow to mint a new one.',
+});
+
 export function buildAgentMemoryHint(_baseUrl?: string): AgentMemoryHint {
   // _baseUrl is kept in the signature for backwards compat but deliberately ignored —
   // agent memory pointers must always point at the canonical production API to prevent
@@ -469,8 +490,13 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
             };
             }
           }
-        } catch {
-          // Fall through to default missing_identity denial
+        } catch (err) {
+          // Session-mint failed (network, /v1/sessions returned non-2xx, body parse error,
+          // onBeforeSession threw inside the inner try). Falling through to bare
+          // missing_identity is correct — agents still get a 403 with a probe-strategy
+          // hint. But the silent catch used to mask /v1/sessions schema drift and
+          // unreachable-API issues for hours, so log loudly.
+          console.warn('[gate] createSessionOnMissing path failed — falling back to bare missing_identity:', err instanceof Error ? err.message : err);
         }
       }
 
@@ -584,8 +610,50 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
               },
             };
           }
+          // The API returns this when the operator_token doesn't exist at all (typo,
+          // never minted, fabricated). Distinct from token_expired — no auto-session
+          // is issued because the agent may have other valid tokens to try first.
+          // Without this branch the gate would fall through to api_error → 503 retry,
+          // which loops forever on a permanent state.
+          if (code === 'invalid_credential') {
+            return {
+              kind: 'deny',
+              reason: {
+                code: 'invalid_credential',
+                agent_instructions: INVALID_CREDENTIAL_INSTRUCTIONS,
+                agent_memory: agentMemoryHint,
+              },
+            };
+          }
+          // Unknown 401 code — log so we notice if the API adds a new credential-state
+          // code without us mapping it. Falls through to api_error below.
+          if (code) {
+            console.warn(`[gate] /v1/assess returned 401 ${code} — no specific handler, surfacing as api_error.`);
+          }
+        } catch (err) {
+          // Body wasn't the expected JSON shape. Don't crash the request, but DO log —
+          // a silent swallow here used to mask /v1/sessions schema drift for hours.
+          console.warn('[gate] /v1/assess 401 body parse failed:', err instanceof Error ? err.message : err);
+        }
+      }
+
+      // 4xx with a structured error body that ISN'T 401/402: log it so operators see
+      // misclassifications instead of opaque 503 retries. Most common cause: a merchant
+      // that didn't validate input shape before invoking the gate (invalid_address,
+      // invalid_identity). We still fall through to api_error so behavior is unchanged
+      // for callers — just visible now.
+      if (response.status >= 400 && response.status < 500 && response.status !== 402) {
+        try {
+          const errData = (await response.clone().json()) as { error?: { code?: string; message?: string } };
+          const code = errData?.error?.code;
+          if (code && code !== 'token_expired' && code !== 'invalid_credential') {
+            console.warn(
+              `[gate] /v1/assess returned ${response.status} ${code} — surfacing as api_error. ` +
+              `Validate input shape before invoking the gate to avoid this.`,
+            );
+          }
         } catch {
-          // Fall through to generic error handling if the body isn't the expected shape.
+          // Body wasn't JSON or didn't have the expected shape — silent fall-through.
         }
       }
 
@@ -614,7 +682,12 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
           data: data as unknown as AgentScoreData,
         },
       };
-    } catch {
+    } catch (err) {
+      // Network failure, AbortSignal timeout, JSON parse error on a 2xx, or the
+      // explicit `throw new Error(...)` for an unhandled non-ok status. Log so ops
+      // can distinguish "API down" from "merchant config wrong" — without this,
+      // every transient blip looked identical to a misconfigured base URL.
+      console.warn('[gate] /v1/assess call failed — surfacing as api_error:', err instanceof Error ? err.message : err);
       if (failOpen) return { kind: 'allow' };
       return { kind: 'deny', reason: { code: 'api_error' } };
     }
@@ -702,7 +775,12 @@ export function createAgentScoreCore(options: AgentScoreCoreOptions): AgentScore
       const data = (await response.json()) as Record<string, unknown>;
       cache.set(`resolve:${wallet}`, { allow: true, raw: data });
       return { ok: true, ...extractFromCached(data) };
-    } catch {
+    } catch (err) {
+      // Network/timeout/parse on the wallet→operator resolve path. Caller maps
+      // `{ok:false}` to `wallet_signer_mismatch.kind === 'api_error'`, which already
+      // surfaces as 503 — but log here too so multi-wallet match failures aren't
+      // silently indistinguishable from "operator simply has no linked wallet".
+      console.warn('[gate] resolveWalletToOperator failed — returning { ok:false }:', err instanceof Error ? err.message : err);
       return { ok: false };
     }
   }

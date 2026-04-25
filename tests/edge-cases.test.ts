@@ -702,6 +702,7 @@ describe('evaluate() — 401 passthrough edge cases', () => {
   });
 
   it('falls through to generic api_error when 401 body has unknown error.code', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
@@ -715,6 +716,41 @@ describe('evaluate() — 401 passthrough edge cases', () => {
 
     expect(status).toHaveBeenCalledWith(403);
     expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: 'api_error' }));
+    // Used to be silent — schema drift would mask itself for hours. Now logs the
+    // unknown code so ops notice without crashing the request.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('something_unknown'));
+    warn.mockRestore();
+  });
+
+  it('emits invalid_credential 403 (not retry-suggesting api_error) for permanent token failures', async () => {
+    // The API returns 401 invalid_credential when the token doesn't exist at all
+    // (typo, never minted). Distinct from token_expired (which carries an auto-session)
+    // — invalid_credential has no recovery payload, the agent must switch tokens or
+    // restart the session flow. Used to fall through to api_error → 503 retry which
+    // looped forever on a permanent state.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({ json: async () => ({ error: { code: 'invalid_credential', message: 'Operator credential not found' } }) }),
+    } as unknown as Response);
+
+    const mw = agentscoreGate({ apiKey: API_KEY });
+    const req = makeReq(WALLET);
+    const { res, status, json } = makeRes();
+    await mw(req, res, makeNext());
+
+    expect(status).toHaveBeenCalledWith(403);
+    const body = json.mock.calls[0]![0] as Record<string, unknown>;
+    expect(body.error).toBe('invalid_credential');
+    // No session fields — API didn't mint one for this case. Agent gets actionable copy.
+    expect(body).not.toHaveProperty('verify_url');
+    expect(body).not.toHaveProperty('session_id');
+    expect(body.agent_instructions).toBeDefined();
+    const instructions = JSON.parse(body.agent_instructions as string);
+    expect(instructions.action).toBe('switch_token_or_restart_session');
+    // agent_memory is also forwarded (cross-merchant pattern hint) so agents know
+    // how to bootstrap a fresh session via the merchant's createSessionOnMissing.
+    expect(body.agent_memory).toBeDefined();
   });
 
   it('falls through to generic api_error when 401 body fails to parse as JSON', async () => {
