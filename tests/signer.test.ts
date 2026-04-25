@@ -140,3 +140,88 @@ describe('extractPaymentSignerAddress — MPP path', () => {
     vi.doUnmock('mppx');
   });
 });
+
+describe('extractPaymentSignerAddress — Solana x402 path', () => {
+  // The Solana branch is selected when `accepted.network` starts with `solana:`. It
+  // dynamic-imports `@x402/svm` (optional peer dep) and recovers the SPL Token payer
+  // from the encoded transaction. Critically: payer is base58 and case-sensitive — we
+  // return it verbatim, never lowercase.
+  const SOL_PAYER = 'G2ajX7CrLGoaL8ncaDYNCQoV9b7XhwGF1RzAyKDEZgNZ';
+
+  it('extracts the case-preserved Solana payer when @x402/svm is available', async () => {
+    vi.doMock('@x402/svm', () => ({
+      decodeTransactionFromPayload: vi.fn(() => ({})),
+      getTokenPayerFromTransaction: vi.fn(() => SOL_PAYER),
+    }));
+    const { extractPaymentSignerAddress: freshExtract } = await import(
+      `../src/signer?svm=${freshImportKey()}`
+    );
+    const header = encodeX402({
+      accepted: { network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1' },
+      payload: { transaction: Buffer.from('not-a-real-tx').toString('base64') },
+    });
+    const result = await freshExtract(makeRequest(), header);
+    expect(result).toBe(SOL_PAYER);
+    // Verbatim case — Solana would silently break if we lowercased here.
+    expect(result).not.toBe(SOL_PAYER.toLowerCase());
+    vi.doUnmock('@x402/svm');
+  });
+
+  it('returns null on a Solana payload when @x402/svm is unavailable (graceful when peer dep absent)', async () => {
+    const header = encodeX402({
+      accepted: { network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1' },
+      payload: { transaction: Buffer.from('any-tx').toString('base64') },
+    });
+    // No vi.doMock for @x402/svm — the dynamic import resolves to null in the test env.
+    const result = await extractPaymentSignerAddress(makeRequest(), header);
+    expect(result).toBeNull();
+  });
+
+  it('returns null on a Solana payload missing the transaction field', async () => {
+    vi.doMock('@x402/svm', () => ({
+      decodeTransactionFromPayload: vi.fn(),
+      getTokenPayerFromTransaction: vi.fn(),
+    }));
+    const { extractPaymentSignerAddress: freshExtract } = await import(
+      `../src/signer?svm-missing-tx=${freshImportKey()}`
+    );
+    const header = encodeX402({
+      accepted: { network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1' },
+      payload: {},
+    });
+    expect(await freshExtract(makeRequest(), header)).toBeNull();
+    vi.doUnmock('@x402/svm');
+  });
+
+  it('returns null when @x402/svm returns no payer (malformed Solana transaction)', async () => {
+    vi.doMock('@x402/svm', () => ({
+      decodeTransactionFromPayload: vi.fn(() => ({})),
+      getTokenPayerFromTransaction: vi.fn(() => undefined),
+    }));
+    const { extractPaymentSignerAddress: freshExtract } = await import(
+      `../src/signer?svm-no-payer=${freshImportKey()}`
+    );
+    const header = encodeX402({
+      accepted: { network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1' },
+      payload: { transaction: Buffer.from('tx').toString('base64') },
+    });
+    expect(await freshExtract(makeRequest(), header)).toBeNull();
+    vi.doUnmock('@x402/svm');
+  });
+
+  it('takes the EIP-3009 branch (not Solana) when network is eip155:*', async () => {
+    const header = encodeX402({
+      accepted: { network: 'eip155:84532' },
+      payload: { authorization: { from: SIGNER_MIXED } },
+    });
+    expect(await extractPaymentSignerAddress(makeRequest(), header)).toBe(SIGNER_LOWER);
+  });
+
+  it('falls back to legacy EIP-3009 extraction when accepted.network is missing (back-compat)', async () => {
+    // Older x402 clients (pre-multi-network) didn't emit `accepted.network`. We still
+    // extract `payload.authorization.from` if it looks EVM — preserves wallet-auth on
+    // those clients without forcing them to upgrade.
+    const header = encodeX402({ payload: { authorization: { from: SIGNER_MIXED } } });
+    expect(await extractPaymentSignerAddress(makeRequest(), header)).toBe(SIGNER_LOWER);
+  });
+});
